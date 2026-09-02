@@ -67,34 +67,6 @@ export const TEMPLATES = [
     ],
   },
   {
-    id: 'mixed-use',
-    name: 'Mixed use w/ storefront',
-    shape: 'mansard',
-    floors: [
-      {
-        label: '3F',
-        units: [
-          { name: '3F Front', position: 'left' },
-          { name: '3F Rear', position: 'right' },
-        ],
-      },
-      {
-        label: '2F',
-        units: [
-          { name: '2F Front', position: 'left' },
-          { name: '2F Rear', position: 'right' },
-        ],
-      },
-      {
-        label: 'Street',
-        units: [
-          { name: 'Street', position: 'full' },
-          { name: 'Storefront', position: 'side' },
-        ],
-      },
-    ],
-  },
-  {
     id: 'blank',
     name: 'Blank',
     shape: 'flat',

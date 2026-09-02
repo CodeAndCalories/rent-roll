@@ -14,7 +14,9 @@ drafting grid, cyan line work, and monospace type. Each unit is a box on the
 drawing, and rent is typed directly into the box.
 
 A fresh install starts with an empty sheet; buildings are added from templates
-(single family, duplexes, triplex, fourplex, mixed use, blank).
+(single family, duplexes, triplex, fourplex, blank). A template is only a
+starting point: floors, units, names, the roof shape, and a side annex are all
+changed afterwards on the drawing with Build.
 
 There is no backend. All data lives in the browser's `localStorage`.
 

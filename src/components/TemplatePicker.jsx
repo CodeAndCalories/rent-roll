@@ -73,7 +73,8 @@ export default function TemplatePicker({ onCreate, onClose }) {
         </div>
 
         <p className="text-[10px] text-line/60">
-          Rents start at 0. Floors, units, names, and the roof can all be changed afterwards with Edit.
+          A layout is only a starting point: rents start at 0, and floors, units, names, the roof shape, and
+          a side annex can all be changed afterwards on the drawing with Build.
         </p>
       </form>
     </Sheet>

@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { SCHEMA_VERSION, makeState } from '../src/data/schema.js'
 import { load, save, STORAGE_KEY } from '../src/data/store.js'
-import { TEMPLATES, buildFromTemplate, templateSummary } from '../src/data/templates.js'
+import { TEMPLATES, buildFromTemplate, getTemplate, templateSummary } from '../src/data/templates.js'
 import {
   RuleError,
   countUnits,
@@ -63,7 +63,6 @@ test('every template builds the documented floors, units, and shape with fresh i
     'duplex-side': [1, 2, 'gable'],
     triplex: [3, 3, 'flat'],
     fourplex: [2, 4, 'flat'],
-    'mixed-use': [3, 6, 'mansard'],
     blank: [1, 1, 'flat'],
   }
   assert.deepEqual(
@@ -98,12 +97,25 @@ test('every template builds the documented floors, units, and shape with fresh i
     assert.notEqual(p.floors[0].units[0].id, q.floors[0].units[0].id)
   }
 
-  const mixed = buildFromTemplate('mixed-use', 'Corner')
-  const bottom = mixed.floors[mixed.floors.length - 1]
-  assert.equal(bottom.label, 'Street')
-  assert.equal(bottom.units.filter((u) => u.position === 'side').length, 1, 'one side annex, bottom floor')
+  // the mixed-use building is gone: templates are common layouts only, and a
+  // side annex is a per-unit toggle on the drawing, never shipped in one
+  assert.equal(getTemplate('mixed-use'), null, 'the mixed-use template is removed')
+  assert.ok(
+    TEMPLATES.every((t) => !/mixed/i.test(t.id) && !/mixed/i.test(t.name)),
+    'no mixed-use layout in the list',
+  )
+  assert.ok(
+    TEMPLATES.every((t) => t.floors.every((f) => f.units.every((u) => u.position !== 'side'))),
+    'no template ships a side annex',
+  )
+  assert.ok(
+    TEMPLATES.every((t) => !templateSummary(t).annex),
+    'and the picker never advertises one',
+  )
+
+  const four = buildFromTemplate('fourplex', 'Corner')
   assert.deepEqual(
-    mixed.floors[0].units.map((u) => u.position),
+    four.floors[0].units.map((u) => u.position),
     ['left', 'right'],
   )
   assert.throws(() => buildFromTemplate('nope', 'x'), /Unknown template/)
@@ -111,11 +123,18 @@ test('every template builds the documented floors, units, and shape with fresh i
 })
 
 test('side annex rule: bottom floor only, one per floor; a bad write is rejected', () => {
-  let state = makeState({ properties: [buildFromTemplate('mixed-use', 'Corner')] })
+  // a fourplex whose bottom-floor rear unit has been turned into the annex
+  const base = makeState({ properties: [buildFromTemplate('fourplex', 'Corner')] })
+  let state = setSideAnnex(base, base.properties[0].floors[1].units[1].id, true)
   const p = state.properties[0]
   const upper = p.floors[0].units[0]
-  const streetMain = p.floors[2].units[0]
-  const storefront = p.floors[2].units[1]
+  const streetMain = p.floors[1].units[0]
+  const storefront = p.floors[1].units[1]
+  assert.deepEqual(
+    p.floors[1].units.map((u) => u.position),
+    ['full', 'side'],
+    'the remaining main unit takes the whole floor',
+  )
 
   // an upper-floor unit cannot become an annex
   assert.equal(sideAnnexCheck(state, upper.id).ok, false)
@@ -133,7 +152,7 @@ test('side annex rule: bottom floor only, one per floor; a bad write is rejected
 
   // turn it off: it becomes a main unit and the floor relays out to left / right
   state = setSideAnnex(state, storefront.id, false)
-  let street = state.properties[0].floors[2]
+  let street = state.properties[0].floors[1]
   assert.deepEqual(
     street.units.map((u) => u.position),
     ['left', 'right'],
@@ -142,7 +161,7 @@ test('side annex rule: bottom floor only, one per floor; a bad write is rejected
   // now the other unit may become the annex; the remaining main unit becomes full
   assert.equal(sideAnnexCheck(state, streetMain.id).ok, true)
   state = setSideAnnex(state, streetMain.id, true)
-  street = state.properties[0].floors[2]
+  street = state.properties[0].floors[1]
   assert.deepEqual(
     street.units.map((u) => u.position),
     ['side', 'full'],
@@ -153,8 +172,8 @@ test('side annex rule: bottom floor only, one per floor; a bad write is rejected
   assert.equal(patchProperty(state, p.id, { name: 'Renamed' }).properties[0].name, 'Renamed')
 
   // inputs were never mutated
-  assert.equal(p.floors[2].units[1].position, 'side')
-  assert.equal(p.floors[2].units[0].position, 'full')
+  assert.equal(p.floors[1].units[1].position, 'side')
+  assert.equal(p.floors[1].units[0].position, 'full')
 })
 
 test('older data that already breaks the annex rule can still be edited', () => {
