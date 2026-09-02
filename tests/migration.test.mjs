@@ -1,9 +1,10 @@
 // Schema migration check. Run with:  npm test   (node --test "tests/**/*.test.mjs")
 //
-// Loads a saved v2 store through the real store.load() with a fake
+// Loads saved v2 and v4 stores through the real store.load() with a fake
 // localStorage and asserts the migration is purely additive: every rent,
 // bill, note, list item, photo, and box position comes through unchanged,
-// a stored sideOf is kept, and a unit with no sideOf gets the default.
+// a stored sideOf is kept, a unit with no sideOf gets the default, and a
+// store written before unit widths existed comes back at equal widths.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -158,7 +159,7 @@ test('a saved v2 store loads at the current version with every value intact', ()
   assert.equal(r.source, 'storage')
   assert.equal(r.from, 2)
   assert.equal(r.state.version, SCHEMA_VERSION)
-  assert.equal(SCHEMA_VERSION, 4)
+  assert.equal(SCHEMA_VERSION, 5)
   assert.equal(r.warnings.length, 0)
 
   const p = r.state.properties[0]
@@ -200,6 +201,83 @@ test('a saved v2 store loads at the current version with every value intact', ()
   assert.equal(r.state.properties.length, 1)
   assert.equal(r.state.properties[0].floors.length, 2)
   assert.equal(r.state.properties[0].floors[1].units.length, 3)
+})
+
+/**
+ * The same store as the v4 app would have written it: v3 and v4 added no
+ * fields, so only the version number differs. One unit carries a widthWeight
+ * as an imported file might, which the migration must keep rather than reset.
+ */
+function v4Store() {
+  const s = v2Store()
+  s.version = 4
+  s.properties[0].floors[0].units[0].widthWeight = 2.5
+  return s
+}
+
+test('a v4 store migrates to v5 with nothing lost and floors split equally', () => {
+  const stored = v4Store()
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
+
+  const r = load()
+  assert.equal(r.source, 'storage')
+  assert.equal(r.from, 4)
+  assert.equal(r.state.version, SCHEMA_VERSION)
+  assert.equal(r.warnings.length, 0)
+
+  // every unit has a width, and a floor that never had one splits equally
+  const units = r.state.properties.flatMap((p) => p.floors).flatMap((f) => f.units)
+  assert.equal(units.length, 5)
+  for (const u of units) {
+    assert.equal(typeof u.widthWeight, 'number')
+    assert.ok(Number.isFinite(u.widthWeight) && u.widthWeight > 0, `${u.id} has a usable width`)
+  }
+  assert.equal(findUnit(r.state, 'fairview-3f-left').widthWeight, 2.5, 'a stored width is kept')
+  assert.equal(findUnit(r.state, 'fairview-3f-right').widthWeight, 1, 'one without gets the equal share')
+  assert.equal(findUnit(r.state, 'legacy-unit').widthWeight, 1)
+
+  // and absolutely nothing else moved
+  const p = r.state.properties[0]
+  const src = stored.properties[0]
+  assert.equal(p.photo, PHOTO, 'photo data URL unchanged')
+  assert.deepEqual(p.photoSize, { w: 1200, h: 800 })
+  assert.equal(p.view, 'photo')
+  assert.equal(p.extra, 42, 'unknown property field kept')
+  assert.deepEqual(p.bills, src.bills, 'property bills unchanged')
+
+  const u = findUnit(r.state, 'fairview-3f-left')
+  const su = findUnit(stored, 'fairview-3f-left')
+  assert.equal(u.name, su.name)
+  assert.equal(u.rent, 1450)
+  assert.equal(u.status, 'leased')
+  assert.equal(u.tenant, 'A. Tenant')
+  assert.equal(u.leaseEnd, '2026-12-31')
+  assert.deepEqual(u.bills, su.bills, 'unit bill')
+  assert.deepEqual(u.tasks, su.tasks, 'list item')
+  assert.deepEqual(u.notes, su.notes, 'note')
+  assert.deepEqual(u.photoBox, su.photoBox, 'box position')
+  assert.equal(u.mystery, 'keep me', 'unknown unit field kept')
+
+  const ds = findUnit(r.state, 'fairview-double-single')
+  assert.equal(ds.rent, 900)
+  assert.equal(ds.splitRent, 850)
+  assert.equal(ds.isSplit, true)
+
+  const sf = findUnit(r.state, 'fairview-storefront')
+  assert.equal(sf.position, 'side', 'the annex is still the annex')
+  assert.equal(sf.sideOf, 'right')
+  assert.equal(sf.rent, 1200)
+
+  assert.equal(p.floors.length, 2)
+  assert.equal(p.floors[0].units.length, 2)
+  assert.equal(p.floors[1].units.length, 3)
+
+  // saving and reloading it changes nothing further
+  assert.equal(save(r.state).ok, true)
+  const again = load()
+  assert.equal(again.from, SCHEMA_VERSION)
+  assert.deepEqual(again.state.properties, r.state.properties)
+  assert.deepEqual(migrate(v4Store()).state, migrate(migrate(v4Store()).state).state, 'idempotent')
 })
 
 test('sideOf is present on every unit: stored values kept, missing ones default to left', () => {

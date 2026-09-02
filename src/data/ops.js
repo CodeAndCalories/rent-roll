@@ -10,12 +10,14 @@
 //   * A building can be removed only when it has no units.
 //   * A unit can be removed only when it is empty (isEmptyUnit), a floor
 //     only when it has no units.
+//   * Width weights are positive numbers, and a side annex never carries
+//     one: it has its own fixed width and is not part of a floor's split.
 //
 // Existing stores that already break a rule (older data) are never rejected
 // for unrelated edits: a property patch is refused only if it ADDS a
 // violation.
 
-import { makeFloor, makeUnit, toAmount } from './schema.js'
+import { makeFloor, makeUnit, toAmount, toWeight } from './schema.js'
 
 export class RuleError extends Error {
   constructor(message, code) {
@@ -316,6 +318,39 @@ export function removeFloor(state, propertyId, floorId) {
   }
   return patchProperty(state, propertyId, (p) => ({
     floors: floorsOf(p).filter((f) => f.id !== floorId),
+  }))
+}
+
+/**
+ * Set width weights on the units of one floor — where the drag handle
+ * between two units commits. `weights` is { [unitId]: number }; a unit the
+ * object does not name keeps the weight it has, so a drag only ever writes
+ * the pair it moved. A weight that is not a positive number falls back to 1,
+ * and one aimed at a side annex is ignored: the annex has its own fixed
+ * width and never takes part in the split.
+ *
+ * A write that changes no weight returns the very same state, so a drag that
+ * ends where it began costs nothing.
+ */
+export function setUnitWidths(state, propertyId, floorId, weights) {
+  if (!weights || typeof weights !== 'object') return state
+  const property = state.properties.find((p) => p.id === propertyId)
+  const floor = property ? floorsOf(property).find((f) => f.id === floorId) : null
+  if (!floor) return state
+
+  let changed = false
+  const units = (floor.units ?? []).map((u) => {
+    if (u.position === 'side') return u
+    if (!Object.prototype.hasOwnProperty.call(weights, u.id)) return u
+    const widthWeight = toWeight(weights[u.id])
+    if (widthWeight === toWeight(u.widthWeight)) return u
+    changed = true
+    return { ...u, widthWeight }
+  })
+  if (!changed) return state
+
+  return patchProperty(state, propertyId, (p) => ({
+    floors: floorsOf(p).map((f) => (f.id === floorId ? { ...f, units } : f)),
   }))
 }
 

@@ -15,6 +15,7 @@
 //     bills: building-level costs (taxes, insurance, water, mortgage)
 //   Floor    { id, label, units[] }           // label like "3F", "2F", "Street"
 //   Unit     { id, name, position,            // position: 'left' | 'right' | 'full' | 'side'
+//              widthWeight,                   // share of its floor's width (default 1)
 //              rent, status,                  // status: 'leased' | 'vacant' | 'renovating'
 //              tenant, leaseStart, leaseEnd,
 //              splittable, isSplit, splitRent, // any unit can be splittable
@@ -44,7 +45,11 @@
 // v4: no field changes. The seed is now empty (buildings come from
 //     templates.js) and the side-annex / splittable rules are enforced on
 //     writes in ops.js. Existing stores load unchanged.
-export const SCHEMA_VERSION = 4
+// v5: + unit.widthWeight (default 1): the units on a floor split its width in
+//     proportion to their weights, so all-1s is the equal split every older
+//     store already draws. Additive; filled by normalizeState, no migration
+//     step. A stored weight is always kept.
+export const SCHEMA_VERSION = 5
 
 export const SHAPES = ['gable', 'flat', 'mansard', 'custom']
 export const POSITIONS = ['left', 'right', 'full', 'side']
@@ -81,6 +86,15 @@ export function toAmount(value) {
   if (s === '' || s === '-' || s === '.' || s === '-.') return 0
   const n = Number(s)
   return Number.isFinite(n) ? n : 0
+}
+
+/**
+ * Coerce any input to a width weight: a positive finite number. Anything
+ * else (missing, 0, negative, junk) means 1, the equal share. Never NaN.
+ */
+export function toWeight(value) {
+  const n = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(n) && n > 0 ? n : 1
 }
 
 /** Display-only rounding. Keeps stored values exact. */
@@ -131,6 +145,7 @@ export function makeUnit(fields = {}) {
     id: newId('unit'),
     name: '',
     position: 'full',
+    widthWeight: 1, // share of the floor's width, relative to its neighbours
     rent: 0,
     status: 'vacant',
     tenant: '',
@@ -145,6 +160,7 @@ export function makeUnit(fields = {}) {
     tasks: [],
     notes: [],
     ...fields,
+    widthWeight: toWeight(fields.widthWeight),
     rent: toAmount(fields.rent),
     splitRent: toAmount(fields.splitRent),
     bills: asArray(fields.bills).map(makeBill),
