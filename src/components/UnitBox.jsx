@@ -96,7 +96,7 @@ export default function UnitBox({
             title="Tap to rename"
             className="min-w-0 flex-1"
             textClassName={labelClass(label)}
-            inputClassName="text-[10px] leading-tight tracking-[0.12em] text-ink uppercase"
+            inputClassName="text-base leading-tight text-ink uppercase sm:text-[10px] sm:tracking-[0.12em]"
           />
         ) : (
           <button
@@ -116,16 +116,17 @@ export default function UnitBox({
               confirmLabel="Sure?"
               aria-label={`Remove ${label}`}
               title="Remove this empty unit"
-              className="min-h-6 px-1 py-0"
+              size="compact"
+              className="-my-1.5 px-1"
             >
               ✕
             </TwoTapChip>
           )}
-          {!readOnly && unit.splittable && (
+          {!readOnly && !building && unit.splittable && (
             <button
               type="button"
               onClick={() => onChange({ isSplit: !unit.isSplit })}
-              className="border border-line/40 px-1.5 py-0.5 text-[9px] tracking-widest text-line uppercase hover:border-amber hover:text-amber"
+              className="-my-3 flex min-h-11 items-center border border-line/40 px-1.5 text-[9px] tracking-widest text-line uppercase hover:border-amber hover:text-amber"
               title={split ? 'Join into one rental' : 'Split into two rentals'}
             >
               {split ? 'Join' : 'Split'}
@@ -135,7 +136,7 @@ export default function UnitBox({
             <button
               type="button"
               onClick={onFlip}
-              className="-my-1 flex h-8 w-7 items-center justify-center text-sm text-line hover:text-amber"
+              className="-my-3 flex h-11 w-7 items-center justify-center text-sm text-line hover:text-amber"
               aria-label="Flip to the other side of the building"
               title="Flip side"
             >
@@ -192,7 +193,7 @@ export function StatusDot({ status, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className="-my-2 -mr-2 flex h-9 w-9 shrink-0 items-center justify-center"
+      className="-my-3 -mr-3 flex h-11 w-11 shrink-0 items-center justify-center"
       aria-label={`Status ${status}. Tap to change.`}
       title={status}
     >

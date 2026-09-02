@@ -44,10 +44,10 @@ export default function PrintView({ state, onBack, portfolioName = '' }) {
   return (
     <div className="min-h-dvh bg-white font-mono text-[#0b1a26]" style={PAPER}>
       <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b border-line/30 bg-white/95 px-4 py-2 backdrop-blur print:hidden sm:px-8">
-        <Chip onClick={onBack} className="min-h-10">
+        <Chip onClick={onBack}>
           ← Back
         </Chip>
-        <Chip active onClick={() => window.print()} className="min-h-10">
+        <Chip active onClick={() => window.print()}>
           Print / Save as PDF
         </Chip>
         <span className="text-[9px] tracking-widest text-line/70 uppercase">

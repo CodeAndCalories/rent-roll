@@ -15,7 +15,7 @@ export default function TitleBlock({ totals: t, saveError, showing = null, portf
   const today = new Date().toISOString().slice(0, 10)
 
   return (
-    <footer className="sticky bottom-0 z-20 border-t-2 border-line bg-sheet/95 backdrop-blur">
+    <footer className="sticky bottom-0 z-20 border-t-2 border-line bg-sheet/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
       {/* 1px gaps over a line-coloured background draw the cell dividers */}
       <div className="grid grid-cols-2 gap-px bg-line/40 sm:grid-cols-3 lg:grid-cols-6">
         <Cell label="Collected / mo" value={formatDollars(t.collected)} sub={`${t.leased}/${t.units} leased`} />

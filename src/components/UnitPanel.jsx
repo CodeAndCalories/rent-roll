@@ -11,7 +11,7 @@ import {
 } from '../data/schema.js'
 import { billMonthly } from './TitleBlock.jsx'
 import { RentInput } from './UnitBox.jsx'
-import { Chip } from './controls.jsx'
+import { Chip, keepFocusedFieldVisible } from './controls.jsx'
 
 // Every component in this file is declared at MODULE scope (see UnitBox.jsx).
 //
@@ -81,7 +81,7 @@ export default function UnitPanel({ unit, onChange, onClose, initialTab = 'bills
               aria-selected={tab === t.id}
               onClick={() => setTab(t.id)}
               className={cx(
-                'font-display -mb-px flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-[11px] tracking-[0.25em] uppercase',
+                'font-display -mb-px flex min-h-11 items-center gap-1.5 border-b-2 px-3 py-2.5 text-[11px] tracking-[0.25em] uppercase',
                 tab === t.id ? 'border-amber text-ink' : 'border-transparent text-line/70 hover:text-ink',
               )}
             >
@@ -95,7 +95,13 @@ export default function UnitPanel({ unit, onChange, onClose, initialTab = 'bills
           ))}
         </nav>
 
-        <div className="flex-1 overflow-y-auto overscroll-contain px-4 pb-6 sm:px-5">
+        {/* the field that takes focus is scrolled clear of the on-screen
+            keyboard; the viewport meta lets the keyboard resize the page
+            rather than shove the sheet up */}
+        <div
+          onFocus={keepFocusedFieldVisible}
+          className="flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] sm:px-5"
+        >
           {tab === 'bills' && <BillsTab unit={unit} onChange={onChange} />}
           {tab === 'list' && <ListTab unit={unit} onChange={onChange} />}
           {tab === 'updates' && <UpdatesTab unit={unit} onChange={onChange} />}
@@ -129,7 +135,7 @@ function PanelHeader({ unit, onChange, onClose, context }) {
           type="button"
           onClick={onClose}
           aria-label="Close"
-          className="-mt-1 -mr-2 flex h-9 w-9 shrink-0 items-center justify-center text-line hover:text-amber"
+          className="-mt-1 -mr-2 flex h-11 w-11 shrink-0 items-center justify-center text-line hover:text-amber"
         >
           ✕
         </button>
@@ -212,7 +218,7 @@ function LayoutRow({ unit, onChange, context }) {
     <div className="mt-3 border-t border-line/30 pt-3">
       <div className="text-[9px] tracking-[0.2em] text-line/70 uppercase">Layout</div>
       <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-2">
-        <label className="flex min-h-9 items-center gap-2 text-[10px] tracking-widest text-ink uppercase">
+        <label className="flex min-h-11 items-center gap-2 text-[10px] tracking-widest text-ink uppercase">
           <input
             type="checkbox"
             checked={Boolean(unit.splittable)}
@@ -224,7 +230,7 @@ function LayoutRow({ unit, onChange, context }) {
 
         <label
           className={cx(
-            'flex min-h-9 items-center gap-2 text-[10px] tracking-widest uppercase',
+            'flex min-h-11 items-center gap-2 text-[10px] tracking-widest uppercase',
             isSide || annex.ok ? 'text-ink' : 'text-line/40',
           )}
         >
@@ -248,7 +254,7 @@ function LayoutRow({ unit, onChange, context }) {
                 aria-checked={side === s}
                 onClick={() => onChange({ sideOf: s })}
                 className={cx(
-                  'min-h-9 border px-2.5 text-[9px] tracking-widest uppercase',
+                  'min-h-11 border px-2.5 text-[9px] tracking-widest uppercase',
                   s === 'right' && '-ml-px',
                   side === s ? 'border-amber bg-amber text-sheet' : 'border-line/40 text-line/70 hover:text-ink',
                 )}
@@ -303,7 +309,7 @@ function StatusPicker({ value, onChange }) {
           aria-checked={value === s}
           onClick={() => onChange(s)}
           className={cx(
-            '-ml-px flex-1 border px-1 py-1.5 text-[9px] tracking-widest uppercase first:ml-0',
+            '-ml-px min-h-11 flex-1 border px-1 py-1.5 text-[9px] tracking-widest uppercase first:ml-0',
             value === s ? STATUS_STYLE[s] : 'border-line/40 text-line/70 hover:text-ink',
           )}
         >
@@ -608,7 +614,7 @@ function Select({ value, onChange, options, ariaLabel }) {
       value={value}
       onChange={(e) => onChange(e.target.value)}
       aria-label={ariaLabel}
-      className="border border-line/40 bg-sheet px-1.5 py-1.5 text-[10px] tracking-widest text-line uppercase"
+      className="min-h-11 border border-line/40 bg-sheet px-1.5 py-1.5 text-base tracking-widest text-line uppercase sm:min-h-9 sm:text-[10px]"
     >
       {opts.map((o) => (
         <option key={o} value={o}>
@@ -671,7 +677,7 @@ function DeleteButton({ onConfirm, what }) {
       <button
         type="button"
         onClick={onConfirm}
-        className="shrink-0 border border-alert px-2 py-1 text-[9px] tracking-widest text-alert uppercase"
+        className="min-h-11 shrink-0 border border-alert px-2 py-1 text-[9px] tracking-widest text-alert uppercase"
       >
         Delete?
       </button>
@@ -683,7 +689,7 @@ function DeleteButton({ onConfirm, what }) {
       onClick={() => setArmed(true)}
       aria-label={`Delete ${what}`}
       title={`Delete ${what}`}
-      className="flex h-8 w-8 shrink-0 items-center justify-center text-line/60 hover:text-alert"
+      className="flex h-11 w-11 shrink-0 items-center justify-center text-line/60 hover:text-alert"
     >
       ✕
     </button>

@@ -129,17 +129,18 @@ function AddBuilding({ onClick }) {
   )
 }
 
-/** First run: nothing on the sheet yet. Fits a phone without scrolling. */
+/**
+ * First run, on a device with no data: one line saying what this is, and the
+ * one thing to do. Nothing else — no tour, no sample data.
+ */
 function EmptyState({ onAddProperty }) {
   return (
     <div className="min-w-full">
       <div className="mx-auto max-w-sm px-6 pt-16 pb-10 text-center">
-        <p className="font-display text-sm tracking-[0.25em] text-ink uppercase">Nothing on the sheet yet</p>
-        <p className="mt-3 text-xs leading-relaxed text-line/70">
-          Rent Roll draws each building as a blueprint elevation with a rent box on every unit, and keeps
-          the totals live as you type. Everything stays in this browser.
+        <p className="text-sm leading-relaxed text-ink">
+          Your buildings, drawn as a blueprint, with the rent in every unit.
         </p>
-        <Chip active onClick={onAddProperty} className="mt-5 min-h-10 px-4">
+        <Chip active onClick={onAddProperty} className="mt-5 px-4">
           + Add building
         </Chip>
       </div>

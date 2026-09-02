@@ -25,7 +25,7 @@ export default function TemplatePicker({ onCreate, onClose }) {
       footer={
         <>
           <Chip onClick={onClose}>Cancel</Chip>
-          <Chip active disabled={!canCreate} onClick={submit} className="min-h-10">
+          <Chip active disabled={!canCreate} onClick={submit}>
             Create
           </Chip>
         </>

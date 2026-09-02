@@ -79,7 +79,7 @@ export default function BackupSheet({ state, onImport, onNotice, onClose }) {
         pending ? (
           <>
             <Chip onClick={() => setPending(null)}>Cancel</Chip>
-            <Chip active onClick={apply} className="min-h-10">
+            <Chip active onClick={apply}>
               Apply import
             </Chip>
           </>
@@ -99,7 +99,7 @@ export default function BackupSheet({ state, onImport, onNotice, onClose }) {
 
         <section className="space-y-2">
           <h3 className="text-[9px] tracking-[0.2em] text-line/70 uppercase">Export</h3>
-          <Chip active onClick={doExport} className="min-h-10">
+          <Chip active onClick={doExport}>
             Download JSON
           </Chip>
           <p className="text-[10px] text-line/60">
@@ -110,7 +110,7 @@ export default function BackupSheet({ state, onImport, onNotice, onClose }) {
 
         <section className="space-y-2">
           <h3 className="text-[9px] tracking-[0.2em] text-line/70 uppercase">Import</h3>
-          <Chip as="label" className="min-h-10">
+          <Chip as="label">
             <input
               type="file"
               accept="application/json,.json"

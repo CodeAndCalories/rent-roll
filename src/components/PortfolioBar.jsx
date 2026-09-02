@@ -29,7 +29,7 @@ export default function PortfolioBar({
       aria-label="Portfolios"
       className="flex flex-wrap items-center gap-1.5 border-b border-line/40 px-4 py-2 sm:px-8"
     >
-      <Chip onClick={onAdd} className="min-h-10" title="Add a portfolio">
+      <Chip onClick={onAdd} title="Add a portfolio">
         + Portfolio
       </Chip>
 
@@ -39,7 +39,7 @@ export default function PortfolioBar({
           <span
             key={f.id}
             aria-current="true"
-            className="inline-flex min-h-10 items-center gap-1.5 border border-amber bg-amber/10 px-2.5 py-1 text-[9px] tracking-[0.18em] text-amber uppercase"
+            className="inline-flex min-h-11 items-center gap-1.5 border border-amber bg-amber/10 px-2.5 py-1 text-[9px] tracking-[0.18em] text-amber uppercase sm:min-h-9"
           >
             <InlineLabel
               value={f.name}
@@ -56,7 +56,7 @@ export default function PortfolioBar({
           <Chip
             key={f.id}
             onClick={() => onSelect(f.id)}
-            className="min-h-10 max-w-[50vw]"
+            className="max-w-[50vw]"
             title={`Show ${f.name || 'this portfolio'} on the sheet`}
           >
             <span className="truncate">{f.name || 'Portfolio'}</span>
@@ -70,7 +70,6 @@ export default function PortfolioBar({
           onConfirm={() => onRemove(active.id)}
           confirmLabel={`Remove ${active.name || 'portfolio'}?`}
           detail={removal?.text}
-          className="min-h-10"
           title="Remove this portfolio"
         >
           ✕ Portfolio

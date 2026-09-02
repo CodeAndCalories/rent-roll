@@ -21,7 +21,7 @@ export const ROOF_CYCLE = ['gable', 'flat', 'mansard']
 // Build handles. The unit tab sits inside the mass and the annex tab is
 // absolutely positioned beside it, so turning Build on never changes the
 // figure's width and captions stay lined up under their buildings.
-const UNIT_TAB_W = 26
+// The tabs are 44px on a phone and back to drafting widths from sm up.
 const ANNEX_TAB_W = 56
 // A second tap on a width handle within this long resets the pair to equal.
 const DOUBLE_TAP_MS = 350
@@ -223,7 +223,7 @@ function FloorRow({
                 onConfirm={() => structure.removeFloor?.(propertyId, floor.id)}
                 confirmLabel="Remove floor?"
                 aria-label={`Remove floor ${floor.label || ''}`}
-                className="min-h-7 px-1.5 py-0"
+                size="compact"
               >
                 ✕ Floor
               </TwoTapChip>
@@ -336,7 +336,7 @@ function WidthHandle({ units, index, areaRef, onPreview, onCommit }) {
         onPointerMove={move}
         onPointerUp={end}
         onPointerCancel={end}
-        className="group absolute inset-y-0 left-1/2 flex w-6 -translate-x-1/2 cursor-ew-resize items-center justify-center"
+        className="group absolute inset-y-0 left-1/2 flex w-11 -translate-x-1/2 cursor-ew-resize items-center justify-center sm:w-6"
         style={{ touchAction: 'none' }}
       >
         <span
@@ -369,7 +369,7 @@ function FloorMarker({ floor, side, build, onRename }) {
           ariaLabel="Floor label"
           title="Tap to rename this floor"
           className="text-[9px] tracking-[0.2em] text-line uppercase"
-          inputClassName="w-14"
+          inputClassName="w-24 text-base sm:w-14 sm:text-[9px]"
         />
       ) : (
         floor.label
@@ -386,7 +386,7 @@ function AddFloorTab({ onClick }) {
       type="button"
       onClick={onClick}
       title="Add a floor on top"
-      className="mb-1.5 flex h-7 w-full items-center justify-center border border-dashed border-line/50 text-[9px] tracking-[0.2em] text-line/70 uppercase hover:border-amber hover:bg-amber/5 hover:text-amber"
+      className="mb-1.5 flex h-11 w-full items-center justify-center border border-dashed border-line/50 text-[9px] tracking-[0.2em] text-line/70 uppercase hover:border-amber hover:bg-amber/5 hover:text-amber sm:h-7"
     >
       + Floor
     </button>
@@ -402,8 +402,7 @@ function AddUnitTab({ label, onClick }) {
       onClick={onClick}
       title={what}
       aria-label={what}
-      className="flex shrink-0 items-center justify-center border-l border-dashed border-line/60 text-sm text-line/70 hover:bg-amber/10 hover:text-amber"
-      style={{ width: UNIT_TAB_W }}
+      className="flex w-11 shrink-0 items-center justify-center border-l border-dashed border-line/60 text-sm text-line/70 hover:bg-amber/10 hover:text-amber sm:w-[26px]"
     >
       +
     </button>
@@ -550,7 +549,7 @@ export function BuildingCaption({
         placeholder="Building name"
         aria-label="Building name"
         autoComplete="off"
-        className="font-display w-full min-w-0 border-b border-transparent bg-transparent py-0.5 text-sm tracking-[0.25em] text-ink uppercase outline-none placeholder:text-line/30 focus:border-amber"
+        className="font-display w-full min-w-0 border-b border-transparent bg-transparent py-1 text-base tracking-[0.25em] text-ink uppercase outline-none placeholder:text-line/30 focus:border-amber sm:py-0.5 sm:text-sm"
       />
       <input
         type="text"
@@ -559,7 +558,7 @@ export function BuildingCaption({
         placeholder="Address"
         aria-label="Address"
         autoComplete="off"
-        className="mt-0.5 w-full min-w-0 border-b border-transparent bg-transparent py-0.5 text-[10px] text-line/70 outline-none placeholder:text-line/30 focus:border-amber"
+        className="mt-0.5 w-full min-w-0 border-b border-transparent bg-transparent py-1 text-base text-line/70 outline-none placeholder:text-line/30 focus:border-amber sm:py-0.5 sm:text-[10px]"
       />
 
       <div className="mt-2 flex flex-wrap items-center gap-1.5">

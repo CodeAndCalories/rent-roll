@@ -21,7 +21,7 @@ export default function BuildingPicker({ properties, selection, onSelect }) {
           aria-checked={selection === ALL}
           active={selection === ALL}
           onClick={() => onSelect(ALL)}
-          className="min-h-10 shrink-0"
+          className="shrink-0"
           title="Draw every building side by side"
         >
           All
@@ -34,7 +34,7 @@ export default function BuildingPicker({ properties, selection, onSelect }) {
             aria-checked={selection === p.id}
             active={selection === p.id}
             onClick={() => onSelect(p.id)}
-            className="min-h-10 max-w-[60vw] shrink-0"
+            className="max-w-[60vw] shrink-0"
             title={p.name || 'Building'}
           >
             <span className="truncate">{p.name || 'Building'}</span>

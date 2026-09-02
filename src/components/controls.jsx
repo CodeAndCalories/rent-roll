@@ -5,9 +5,29 @@ import { useEffect, useRef, useState } from 'react'
 /**
  * Compact uppercase chip button. `as="label"` makes it wrap a hidden input.
  * `active` fills it amber; `tone="alert"` outlines it in the alert colour.
- * 36px tall so it is a comfortable tap target on a phone.
+ *
+ * `size`:
+ *   'tap'      44px on a phone, 36px from sm up. The default: anything a
+ *              thumb aims at on the toolbar, the bars, or a sheet.
+ *   'compact'  36px, for the handful of chips that live INSIDE a unit box
+ *              on the drawing, where three 44px targets do not fit a 160px
+ *              column. Give those a negative margin so the row keeps its
+ *              height.
  */
-export function Chip({ as: Tag = 'button', active = false, tone = 'line', className, children, ...rest }) {
+const CHIP_SIZE = {
+  tap: 'min-h-11 sm:min-h-9 px-2.5',
+  compact: 'min-h-9 px-1.5',
+}
+
+export function Chip({
+  as: Tag = 'button',
+  active = false,
+  tone = 'line',
+  size = 'tap',
+  className,
+  children,
+  ...rest
+}) {
   const look = active
     ? 'border-amber bg-amber text-sheet'
     : tone === 'alert'
@@ -18,7 +38,8 @@ export function Chip({ as: Tag = 'button', active = false, tone = 'line', classN
     <Tag
       {...extra}
       className={cx(
-        'inline-flex min-h-9 cursor-pointer items-center gap-1 border px-2.5 py-1 text-[9px] tracking-[0.18em] uppercase select-none disabled:cursor-not-allowed disabled:opacity-40',
+        'inline-flex cursor-pointer items-center gap-1 border py-1 text-[9px] tracking-[0.18em] uppercase select-none disabled:cursor-not-allowed disabled:opacity-40',
+        CHIP_SIZE[size] ?? CHIP_SIZE.tap,
         look,
         className,
       )}
@@ -35,7 +56,7 @@ export function Chip({ as: Tag = 'button', active = false, tone = 'line', classN
  * lying around. `detail` names what is about to go — shown beside the chip
  * while it is armed, with longer to read it.
  */
-export function TwoTapChip({ onConfirm, confirmLabel = 'Sure?', detail, children, className, ...rest }) {
+export function TwoTapChip({ onConfirm, confirmLabel = 'Sure?', detail, size, children, className, ...rest }) {
   const [armed, setArmed] = useState(false)
 
   useEffect(() => {
@@ -47,6 +68,7 @@ export function TwoTapChip({ onConfirm, confirmLabel = 'Sure?', detail, children
   const chip = (
     <Chip
       tone="alert"
+      size={size}
       aria-pressed={armed}
       className={cx(armed && 'border-alert bg-alert/15', className)}
       onClick={() => {
@@ -112,12 +134,20 @@ export function Sheet({ title, onClose, children, footer, wide = false }) {
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="-mr-2 flex h-9 w-9 shrink-0 items-center justify-center text-line hover:text-amber"
+            className="-mr-2 flex h-11 w-11 shrink-0 items-center justify-center text-line hover:text-amber"
           >
             ✕
           </button>
         </header>
-        <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">{children}</div>
+        {/* focusin, not focus: the field that just gained focus is scrolled
+            clear of the on-screen keyboard, which the viewport meta lets
+            resize the page rather than shove it up */}
+        <div
+          onFocus={keepFocusedFieldVisible}
+          className="flex-1 overflow-y-auto overscroll-contain px-4 py-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:px-5"
+        >
+          {children}
+        </div>
         {footer && (
           <footer className="flex flex-wrap items-center justify-end gap-2 border-t border-line/40 px-4 py-3 sm:px-5">
             {footer}
@@ -202,6 +232,20 @@ export function InlineLabel({
       className={cx('min-w-0 border-b border-amber bg-transparent outline-none', className, inputClassName)}
     />
   )
+}
+
+/**
+ * Bring the focused field into view inside a scrolling sheet. Runs on the
+ * next frame so it measures after the keyboard has resized the viewport.
+ * Exported for UnitPanel, which has a bottom sheet of its own.
+ */
+export function keepFocusedFieldVisible(e) {
+  const el = e.target
+  if (!el || typeof el.scrollIntoView !== 'function') return
+  if (!el.matches?.('input, textarea, select')) return
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => el.scrollIntoView({ block: 'center' }))
+  })
 }
 
 export function cx(...parts) {

@@ -101,6 +101,13 @@
   }
   body {
     @apply bg-sheet text-ink font-mono antialiased;
+    /* The elevation sheet is the only thing that scrolls sideways; the page
+       itself never does. `clip` (not `hidden`) so this does not turn the
+       body into a scroll container and break the sticky title block. */
+    overflow-x: clip;
+    /* landscape on a notched phone: keep content out of the rounded corners */
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
   }
   input,
   select,

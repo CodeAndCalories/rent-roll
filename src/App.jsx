@@ -40,6 +40,7 @@ import TemplatePicker from './components/TemplatePicker.jsx'
 import BuildingPicker from './components/BuildingPicker.jsx'
 import PortfolioBar from './components/PortfolioBar.jsx'
 import SaveState from './components/SaveState.jsx'
+import UpdatePrompt from './components/UpdatePrompt.jsx'
 import { Chip } from './components/controls.jsx'
 
 // All components at module scope (see components/UnitBox.jsx for why).
@@ -289,6 +290,7 @@ export default function App() {
         savedAt={savedAt}
         saveError={saveError}
       />
+      <UpdatePrompt />
       <PortfolioBar
         portfolios={portfolioSummaries(state)}
         activeId={activeId}
@@ -353,7 +355,7 @@ export default function App() {
 
 function SheetHeader({ warnings, collected, portfolioName, savedAt, saveError }) {
   return (
-    <header className="border-b border-line/40">
+    <header className="border-b border-line/40 pt-[env(safe-area-inset-top)]">
       <div className="flex items-baseline justify-between gap-3 px-4 py-3 sm:px-8">
         <h1 className="font-display shrink-0 text-base tracking-[0.3em] text-ink uppercase">Rent Roll</h1>
         <SaveState savedAt={savedAt} error={saveError} />
@@ -378,19 +380,23 @@ function SheetHeader({ warnings, collected, portfolioName, savedAt, saveError })
 function Tools({ onRaise, onUndo, undoLabel, onPrint, onBackup }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5 border-b border-line/40 px-4 py-2 sm:px-8">
-      <Chip onClick={onRaise} className="min-h-10" title="Model a rent increase across leased units">
-        Raise rents
+      {/* short labels on a phone so four chips stay on one line at 380px */}
+      <Chip onClick={onRaise} title="Model a rent increase across leased units">
+        ↑ <span className="sm:hidden">Rents</span>
+        <span className="hidden sm:inline">Raise rents</span>
       </Chip>
       {onUndo && (
-        <Chip tone="alert" onClick={onUndo} className="min-h-10" title="Put the rents back">
+        <Chip tone="alert" onClick={onUndo} title="Put the rents back">
           Undo {undoLabel}
         </Chip>
       )}
-      <Chip onClick={onPrint} className="min-h-10" title="Clean table view to print or save as PDF">
-        Print / PDF
+      <Chip onClick={onPrint} title="Clean table view to print or save as PDF">
+        ⎙ <span className="sm:hidden">PDF</span>
+        <span className="hidden sm:inline">Print / PDF</span>
       </Chip>
-      <Chip onClick={onBackup} className="min-h-10" title="Export or import the JSON data">
-        Backup
+      <Chip onClick={onBackup} title="Export or import the JSON data">
+        ⇅ <span className="hidden sm:inline">Backup</span>
+        <span className="sm:hidden">Backup</span>
       </Chip>
     </div>
   )
@@ -414,7 +420,7 @@ function Notice({ notice, onDismiss, onUndo }) {
           <button
             type="button"
             onClick={onUndo}
-            className="min-h-8 border border-current px-2 text-[9px] tracking-[0.2em] uppercase"
+            className="min-h-11 border border-current px-2 text-[9px] tracking-[0.2em] uppercase sm:min-h-8"
           >
             Undo
           </button>
@@ -423,7 +429,7 @@ function Notice({ notice, onDismiss, onUndo }) {
           type="button"
           onClick={onDismiss}
           aria-label="Dismiss"
-          className="-my-1 -mr-2 flex h-8 w-8 items-center justify-center opacity-70 hover:opacity-100"
+          className="-my-2 -mr-2 flex h-11 w-11 items-center justify-center opacity-70 hover:opacity-100"
         >
           ✕
         </button>

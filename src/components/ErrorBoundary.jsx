@@ -45,14 +45,14 @@ function Crash({ error }) {
           <button
             type="button"
             onClick={() => window.location.reload()}
-            className="min-h-10 border border-amber bg-amber px-3 text-[10px] tracking-[0.2em] text-sheet uppercase"
+            className="min-h-11 border border-amber bg-amber px-3 text-[10px] tracking-[0.2em] text-sheet uppercase"
           >
             Reload
           </button>
           <button
             type="button"
             onClick={backup}
-            className="min-h-10 border border-line/50 px-3 text-[10px] tracking-[0.2em] text-line uppercase hover:border-amber hover:text-amber"
+            className="min-h-11 border border-line/50 px-3 text-[10px] tracking-[0.2em] text-line uppercase hover:border-amber hover:text-amber"
           >
             Download backup
           </button>

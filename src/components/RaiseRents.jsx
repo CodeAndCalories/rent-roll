@@ -106,7 +106,6 @@ export default function RaiseRentsSheet({ properties, onApply, onClose }) {
             active
             disabled={changes.length === 0}
             onClick={() => onApply({ changes, mode, amount })}
-            className="min-h-10"
           >
             Apply to {changes.length} {changes.length === 1 ? 'unit' : 'units'}
           </Chip>
@@ -123,7 +122,7 @@ export default function RaiseRentsSheet({ properties, onApply, onClose }) {
                 aria-checked={mode === m.id}
                 active={mode === m.id}
                 onClick={() => setMode(m.id)}
-                className={cx('min-h-10', m.id !== 'percent' && '-ml-px')}
+                className={cx(m.id !== 'percent' && '-ml-px')}
               >
                 {m.label}
               </Chip>
