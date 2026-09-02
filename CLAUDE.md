@@ -36,7 +36,7 @@ Lives in `src/data/schema.js` (shapes, defaults, factories, seed) and
 `src/data/store.js` (load, save, migrate, importJSON, exportJSON).
 
 ```
-State    { version, updatedAt, properties[] }          // version: 2
+State    { version, updatedAt, properties[] }          // version: 3
 Property { id, name, address, shape, photo, photoSize, view, floors[], bills[] }
   shape: 'gable' | 'flat' | 'mansard' | 'custom'
   photo: null or a data-URL string (JPEG, resized to <= 1200px wide; the
@@ -50,7 +50,7 @@ Unit {
   rent, status,                         // status: 'leased' | 'vacant' | 'renovating'
   tenant, leaseStart, leaseEnd,         // dates as 'YYYY-MM-DD' or null
   splittable, isSplit, splitRent,       // for the double single
-  sideOf,                               // 'left' | 'right': side a 'side' unit hangs off
+  sideOf,                               // 'left' | 'right': side a 'side' unit hangs off (default 'left')
   photoBox,                             // null or { x, y, w, h } fractions (0-1) of the photo
   bills[], tasks[], notes[]
 }
@@ -59,17 +59,23 @@ Task  { id, text, done, createdAt }
 Note  { id, text, createdAt }
 ```
 
-Schema history: v1 initial; v2 added `photoSize`, `view`, `sideOf`, `photoBox`
-(additive, filled by `normalizeState`, no migration step needed).
+Schema history: v1 initial; v2 added `photoSize`, `view`, `sideOf` (default
+`'right'`), `photoBox`; v3 changed the `sideOf` default to `'left'`. All
+additive, filled by `normalizeState`, no migration step needed. A stored
+`sideOf` is always kept; the default only applies to units that have none.
+`tests/migration-v3.test.mjs` (run with `npm test`) loads a saved v2 store and
+asserts nothing changes.
 
 - **Split units.** When `isSplit` is true, `rent` is the first half and
   `splitRent` is the second half. When not split, `rent` is the whole unit and
   `splitRent` is ignored but kept.
-- **Seed** (`seedData()`): "2107 Fairview" (gable) with floors 3F (left/right),
-  2F (left/right), Street ("Double single" full-width + splittable, "Storefront"
-  side); "Duplex" (gable) with 2F "Upper" and 1F "Lower". Rents are 0. Each
-  property starts with four building bills at 0: Mortgage, Property taxes,
-  Insurance, Water.
+- **Seed** (`seedData()`): "2107 Fairview" (gable) with floors 3F ("3F Front"
+  left / "3F Rear" right), 2F ("2F Front" / "2F Rear"), Street ("Double
+  single" full-width + splittable, "Storefront" side); "Duplex" (gable) with
+  2F "Upper" and 1F "Lower". Rents are 0. Each property starts with four
+  building bills at 0: Mortgage, Property taxes, Insurance, Water. Seed
+  changes never rename units in an existing store: the seed is only used
+  when storage is empty or unreadable.
 - **Ids** are stable strings. Seed ids are readable (`fairview-3f-left`);
   new entities get `newId(prefix)`.
 
