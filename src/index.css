@@ -1,34 +1,59 @@
 @import "tailwindcss";
 
 /* Blueprint theme tokens. Tailwind v4 turns these into utilities:
-   bg-sheet, text-ink, border-ink, font-mono, etc. */
+   bg-sheet, text-ink, border-line, text-amber, text-alert,
+   font-mono (numbers + labels), font-display (headings). */
 @theme {
-  --color-sheet: #0b1d3a;        /* dark navy drawing sheet */
-  --color-sheet-deep: #071428;   /* darker navy for edges/vignette */
-  --color-ink: #22d3ee;          /* cyan line work */
-  --color-ink-dim: #0e7490;      /* muted cyan for secondary lines */
-  --color-paper: #e0f2fe;        /* light text on the sheet */
+  --color-sheet: #08202e; /* drawing sheet */
+  --color-line: #5fb6d0; /* line work */
+  --color-ink: #a8e8f5; /* text */
+  --color-amber: #f2b441; /* accent */
+  --color-alert: #f2704b; /* alert */
 
-  --font-mono: "JetBrains Mono", "Cascadia Code", "Fira Code", ui-monospace,
-    SFMono-Regular, Menlo, Consolas, monospace;
+  --font-mono: "DM Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-display: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
-/* Drafting grid: fine lines every 20px, heavier lines every 100px. */
+/* Drafting grid: 22px lines at 7% opacity. */
 @utility bg-blueprint-grid {
   background-color: var(--color-sheet);
   background-image:
-    linear-gradient(to right, color-mix(in oklab, var(--color-ink) 22%, transparent) 1px, transparent 1px),
-    linear-gradient(to bottom, color-mix(in oklab, var(--color-ink) 22%, transparent) 1px, transparent 1px),
-    linear-gradient(to right, color-mix(in oklab, var(--color-ink) 9%, transparent) 1px, transparent 1px),
-    linear-gradient(to bottom, color-mix(in oklab, var(--color-ink) 9%, transparent) 1px, transparent 1px);
-  background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px;
+    linear-gradient(to right, color-mix(in srgb, var(--color-line) 7%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--color-line) 7%, transparent) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+/* 45° section hatching for vacant units. */
+@utility hatch-45 {
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent 0 7px,
+    color-mix(in srgb, var(--color-line) 24%, transparent) 7px 8px
+  );
+}
+
+/* Denser 45° hatching for the earth below the grade line. */
+@utility hatch-grade {
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent 0 8px,
+    color-mix(in srgb, var(--color-line) 60%, transparent) 8px 9.5px
+  );
 }
 
 @layer base {
-  html, body, #root {
-    height: 100%;
+  html,
+  body,
+  #root {
+    min-height: 100%;
   }
   body {
-    @apply bg-sheet text-paper font-mono antialiased;
+    @apply bg-sheet text-ink font-mono antialiased;
+  }
+  input,
+  select,
+  button {
+    font: inherit;
+    color: inherit;
   }
 }
