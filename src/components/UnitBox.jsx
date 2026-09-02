@@ -59,7 +59,8 @@ export default function UnitBox({
       className={cx(
         'relative flex min-w-0 flex-col p-2 pb-3',
         !readOnly && 'cursor-pointer',
-        variant === 'main' && 'flex-1 border-r border-line last:border-r-0',
+        // width comes from the parent's flex style (see FloorRow)
+        variant === 'main' && 'border-r border-line last:border-r-0',
         variant === 'side' && 'shrink-0 border border-line bg-line/5',
         renovating && 'outline-dashed outline-1 -outline-offset-4 outline-amber/70',
       )}

@@ -60,7 +60,7 @@ export default function PhotoBuilding({
 
       {units.length === 0 && (
         <div className="pointer-events-none absolute inset-x-0 bottom-2 text-center text-[9px] tracking-widest text-line/70 uppercase">
-          No units{readOnly ? '' : ' · tap Edit'}
+          No units{readOnly ? '' : ' · add them on the drawing'}
         </div>
       )}
 

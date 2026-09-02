@@ -13,6 +13,7 @@ import {
   removeProperty as opsRemoveProperty,
   removeUnit as opsRemoveUnit,
   renameFloor as opsRenameFloor,
+  setUnitWidths as opsSetUnitWidths,
   sideAnnexCheck,
 } from './data/ops.js'
 import { buildFromTemplate } from './data/templates.js'
@@ -89,6 +90,8 @@ export default function App() {
       removeFloor: (propertyId, floorId) => guarded((s) => opsRemoveFloor(s, propertyId, floorId)),
       renameFloor: (propertyId, floorId, label) =>
         guarded((s) => opsRenameFloor(s, propertyId, floorId, label)),
+      setWidths: (propertyId, floorId, weights) =>
+        guarded((s) => opsSetUnitWidths(s, propertyId, floorId, weights)),
       removeUnit: (unitId) =>
         guarded((s) => {
           const next = opsRemoveUnit(s, unitId) // throws when the unit holds anything

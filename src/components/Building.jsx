@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { Fragment, useRef, useState } from 'react'
 import UnitBox from './UnitBox.jsx'
 import PhotoBuilding, { PHOTO_MIN_W } from './PhotoBuilding.jsx'
 import { Chip, InlineLabel, TwoTapChip, cx } from './controls.jsx'
 import { countUnits } from '../data/ops.js'
+import { equalizePair, growOf, isMainUnit, resizePair } from '../lib/widths.js'
 import { PHOTO_MAX_WIDTH, resizeImageFile } from '../lib/image.js'
 
 // All components at module scope (see UnitBox.jsx for why).
@@ -22,8 +23,10 @@ export const ROOF_CYCLE = ['gable', 'flat', 'mansard']
 // figure's width and captions stay lined up under their buildings.
 const UNIT_TAB_W = 26
 const ANNEX_TAB_W = 56
+// A second tap on a width handle within this long resets the pair to equal.
+const DOUBLE_TAP_MS = 350
 
-const isMain = (u) => u.position !== 'side'
+const isMain = isMainUnit
 const POSITION_ORDER = { left: 0, full: 1, right: 2 }
 
 /** Layout facts other components need (Elevation uses these for spacing). */
@@ -180,31 +183,29 @@ function FloorRow({
   rentScale,
   readOnly,
 }) {
+  const areaRef = useRef(null)
+  // Weights while a handle is being dragged. Preview only: the store is
+  // written on release, never on every pointer move.
+  const [draft, setDraft] = useState(null)
+
   const units = floor.units
     .filter(isMain)
     .slice()
     .sort((a, b) => (POSITION_ORDER[a.position] ?? 1) - (POSITION_ORDER[b.position] ?? 1))
   // A floor only goes when nothing at all is on it, annex included.
   const bare = floor.units.length === 0
+  const shown = draft
+    ? units.map((u) => (draft[u.id] != null ? { ...u, widthWeight: draft[u.id] } : u))
+    : units
+  const grow = growOf(shown)
+
+  const commitWidths = (weights) => {
+    setDraft(null)
+    if (weights) structure.setWidths?.(propertyId, floor.id, weights)
+  }
 
   return (
     <div className="relative flex border-t border-line" style={{ height: FLOOR_H }}>
-      {units.length === 0 && (
-        <div className="flex flex-1 items-center justify-center gap-2 text-[9px] tracking-widest text-line/40 uppercase">
-          <span>No units on this floor</span>
-          {build && bare && (
-            <TwoTapChip
-              onConfirm={() => structure.removeFloor?.(propertyId, floor.id)}
-              confirmLabel="Remove floor?"
-              aria-label={`Remove floor ${floor.label || ''}`}
-              className="min-h-7 px-1.5 py-0"
-            >
-              ✕ Floor
-            </TwoTapChip>
-          )}
-        </div>
-      )}
-
       <FloorMarker
         floor={floor}
         side={markerSide}
@@ -212,23 +213,140 @@ function FloorRow({
         onRename={(label) => structure.renameFloor?.(propertyId, floor.id, label)}
       />
 
-      {units.map((u) => (
-        <UnitBox
-          key={u.id}
-          unit={u}
-          variant="main"
-          rentScale={rentScale}
-          readOnly={readOnly}
-          build={build}
-          onRemove={() => structure.removeUnit?.(u.id)}
-          onChange={(patch) => onUnitChange(u.id, patch)}
-          onOpen={() => onOpenUnit(u.id)}
-        />
-      ))}
+      {/* the units' share of the row: what a width handle measures against */}
+      <div ref={areaRef} className="flex min-w-0 flex-1">
+        {units.length === 0 && (
+          <div className="flex flex-1 items-center justify-center gap-2 text-[9px] tracking-widest text-line/40 uppercase">
+            <span>No units on this floor</span>
+            {build && bare && (
+              <TwoTapChip
+                onConfirm={() => structure.removeFloor?.(propertyId, floor.id)}
+                confirmLabel="Remove floor?"
+                aria-label={`Remove floor ${floor.label || ''}`}
+                className="min-h-7 px-1.5 py-0"
+              >
+                ✕ Floor
+              </TwoTapChip>
+            )}
+          </div>
+        )}
+
+        {units.map((u, i) => (
+          <Fragment key={u.id}>
+            {build && i > 0 && (
+              <WidthHandle
+                units={units}
+                index={i - 1}
+                areaRef={areaRef}
+                onPreview={setDraft}
+                onCommit={commitWidths}
+              />
+            )}
+            <UnitBox
+              unit={u}
+              variant="main"
+              style={{ flexGrow: grow[i], flexBasis: 0 }}
+              rentScale={rentScale}
+              readOnly={readOnly}
+              build={build}
+              onRemove={() => structure.removeUnit?.(u.id)}
+              onChange={(patch) => onUnitChange(u.id, patch)}
+              onOpen={() => onOpenUnit(u.id)}
+            />
+          </Fragment>
+        ))}
+      </div>
 
       {build && (
         <AddUnitTab label={floor.label} onClick={() => structure.addUnit?.(propertyId, floor.id)} />
       )}
+    </div>
+  )
+}
+
+/**
+ * The draggable edge between two neighbouring units: a zero-width flex item
+ * sitting on the shared wall with a thumb-sized target over it, so it costs
+ * the drawing no space. Pointer Events with capture keep the drag when a
+ * thumb slides off the target, and `touch-action: none` stops it scrolling
+ * the sheet instead. Dragging only previews; the release commits. A second
+ * tap within DOUBLE_TAP_MS puts the pair back to equal halves.
+ */
+function WidthHandle({ units, index, areaRef, onPreview, onCommit }) {
+  const gesture = useRef(null)
+  const lastTap = useRef(0)
+  const [live, setLive] = useState(false)
+  const a = units[index]
+  const b = units[index + 1]
+
+  const begin = (e) => {
+    if (e.button != null && e.button !== 0) return
+    const width = areaRef.current?.getBoundingClientRect().width
+    if (!width) return
+
+    const now = Date.now()
+    if (now - lastTap.current < DOUBLE_TAP_MS) {
+      lastTap.current = 0
+      onCommit(equalizePair(units, index))
+      return
+    }
+    lastTap.current = now
+
+    e.preventDefault()
+    e.stopPropagation()
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    } catch {
+      // capture is best-effort; the events still arrive here
+    }
+    gesture.current = { id: e.pointerId, x0: e.clientX, width, last: null }
+    setLive(true)
+  }
+
+  const move = (e) => {
+    const g = gesture.current
+    if (!g || e.pointerId !== g.id) return
+    const next = resizePair(units, index, (e.clientX - g.x0) / g.width)
+    if (!next) return
+    g.last = next
+    onPreview(next)
+  }
+
+  const end = (e) => {
+    const g = gesture.current
+    if (!g || e.pointerId !== g.id) return
+    gesture.current = null
+    setLive(false)
+    if (g.last) {
+      lastTap.current = 0 // a real drag is never the first of two taps
+      onCommit(g.last)
+    } else {
+      onPreview(null)
+    }
+  }
+
+  return (
+    <div className="relative z-10 w-0 shrink-0">
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={`Drag to move the wall between ${a?.name || 'unit'} and ${b?.name || 'unit'}`}
+        title="Drag to move the wall · double-tap for equal halves"
+        onPointerDown={begin}
+        onPointerMove={move}
+        onPointerUp={end}
+        onPointerCancel={end}
+        className="group absolute inset-y-0 left-1/2 flex w-6 -translate-x-1/2 cursor-ew-resize items-center justify-center"
+        style={{ touchAction: 'none' }}
+      >
+        <span
+          aria-hidden
+          className={cx(
+            'block h-10 w-[3px] rounded-full',
+            live ? 'bg-amber' : 'bg-line/50 group-hover:bg-amber',
+          )}
+        />
+      </div>
     </div>
   )
 }
