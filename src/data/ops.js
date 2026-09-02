@@ -8,10 +8,14 @@
 //     building, and a floor may have at most one.
 //   * splittable false forces isSplit false. splitRent is kept (not counted).
 //   * A building can be removed only when it has no units.
+//   * A unit can be removed only when it is empty (isEmptyUnit), a floor
+//     only when it has no units.
 //
 // Existing stores that already break a rule (older data) are never rejected
 // for unrelated edits: a property patch is refused only if it ADDS a
 // violation.
+
+import { makeFloor, makeUnit, toAmount } from './schema.js'
 
 export class RuleError extends Error {
   constructor(message, code) {
@@ -188,4 +192,136 @@ export function removeProperty(state, propertyId) {
     throw new RuleError(`${p.name || 'That building'} still has units. Remove them first.`, 'has-units')
   }
   return { ...state, properties: state.properties.filter((x) => x.id !== propertyId) }
+}
+
+// ---------------------------------------------------------------------------
+// structure — the Build handles on the drawing write through here
+//
+// Every structural change goes through patchProperty, so the side-annex rule
+// is re-checked on the result and a bad write leaves the state alone.
+// ---------------------------------------------------------------------------
+
+const floorsOf = (property) => (Array.isArray(property?.floors) ? property.floors : [])
+
+/** True when nothing of value is stored on the unit, so it may be removed. */
+export function isEmptyUnit(unit) {
+  if (!unit) return false
+  return (
+    toAmount(unit.rent) === 0 &&
+    toAmount(unit.splitRent) === 0 &&
+    !(unit.tenant && String(unit.tenant).trim()) &&
+    !(unit.bills && unit.bills.length) &&
+    !(unit.tasks && unit.tasks.length) &&
+    !(unit.notes && unit.notes.length)
+  )
+}
+
+/** "3F" on top -> "4F"; otherwise count + "F". */
+export function nextFloorLabel(floors) {
+  const top = floors[0]?.label ?? ''
+  const m = /^(d+)F$/i.exec(String(top).trim())
+  if (m) return `${Number(m[1]) + 1}F`
+  return `${floors.length + 1}F`
+}
+
+/**
+ * Append a unit to a floor. Main units are laid out by count (one -> full,
+ * two -> left + right), so an arriving second unit moves the first one over.
+ * Side units are never touched.
+ */
+export function addUnitTo(floor) {
+  const units = floor.units ?? []
+  const main = units.filter((u) => u.position !== 'side')
+  const label = floor.label || 'Unit'
+  const name = main.length === 0 ? label : `${label} ${main.length + 1}`
+  return relayoutFloor({ ...floor, units: [...units, makeUnit({ name, position: 'full' })] })
+}
+
+/** Remove one unit from a floor by id; the remaining main units relay out. */
+export function removeUnitFrom(floor, unitId) {
+  return relayoutFloor({ ...floor, units: (floor.units ?? []).filter((u) => u.id !== unitId) })
+}
+
+/** Add a floor on top of the building, with one unit on it. */
+export function addFloor(state, propertyId) {
+  return patchProperty(state, propertyId, (p) => {
+    const floors = floorsOf(p)
+    const label = nextFloorLabel(floors)
+    return {
+      floors: [makeFloor({ label, units: [makeUnit({ name: label, position: 'full' })] }), ...floors],
+    }
+  })
+}
+
+/** Add a unit to one floor. An unknown floor leaves the state unchanged. */
+export function addUnit(state, propertyId, floorId) {
+  return patchProperty(state, propertyId, (p) => ({
+    floors: floorsOf(p).map((f) => (f.id === floorId ? addUnitTo(f) : f)),
+  }))
+}
+
+/**
+ * Hang a side annex off the bottom floor. Rejected with RuleError when the
+ * building has no floors, or when that floor already has one.
+ */
+export function addSideAnnex(state, propertyId, side = 'left') {
+  return patchProperty(state, propertyId, (p) => {
+    const floors = floorsOf(p)
+    const bottom = floors[floors.length - 1]
+    if (!bottom) throw new RuleError('Add a floor before a side annex.', 'no-floor')
+    if ((bottom.units ?? []).some((u) => u.position === 'side')) {
+      throw new RuleError(
+        `${bottom.label || 'The bottom floor'} already has a side annex.`,
+        'taken',
+      )
+    }
+    const unit = makeUnit({
+      name: 'Annex',
+      position: 'side',
+      sideOf: side === 'right' ? 'right' : 'left',
+    })
+    return {
+      floors: floors.map((f) => (f.id === bottom.id ? { ...f, units: [...(f.units ?? []), unit] } : f)),
+    }
+  })
+}
+
+/**
+ * Remove a unit. Rejected with RuleError unless the unit is empty, so a unit
+ * holding rent, a tenant, bills, list items, or notes can never be dropped.
+ */
+export function removeUnit(state, unitId) {
+  const hit = locateUnit(state, unitId)
+  if (!hit) return state
+  if (!isEmptyUnit(hit.unit)) {
+    throw new RuleError(
+      `${hit.unit.name || 'That unit'} has rent, a tenant, bills, list items, or notes. ` +
+        'Clear it in the unit panel first.',
+      'not-empty',
+    )
+  }
+  return patchProperty(state, hit.property.id, (p) => ({
+    floors: floorsOf(p).map((f) => (f.id === hit.floor.id ? removeUnitFrom(f, unitId) : f)),
+  }))
+}
+
+/** Remove a floor. Rejected with RuleError while it still has units. */
+export function removeFloor(state, propertyId, floorId) {
+  const property = state.properties.find((p) => p.id === propertyId)
+  if (!property) return state
+  const floor = floorsOf(property).find((f) => f.id === floorId)
+  if (!floor) return state
+  if ((floor.units ?? []).length > 0) {
+    throw new RuleError(`${floor.label || 'That floor'} still has units. Remove them first.`, 'has-units')
+  }
+  return patchProperty(state, propertyId, (p) => ({
+    floors: floorsOf(p).filter((f) => f.id !== floorId),
+  }))
+}
+
+/** Rename a floor (the label on its level marker). */
+export function renameFloor(state, propertyId, floorId, label) {
+  return patchProperty(state, propertyId, (p) => ({
+    floors: floorsOf(p).map((f) => (f.id === floorId ? { ...f, label: String(label ?? '') } : f)),
+  }))
 }
