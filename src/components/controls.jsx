@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 /**
  * Compact uppercase chip button. `as="label"` makes it wrap a hidden input.
  * `active` fills it amber; `tone="alert"` outlines it in the alert colour.
+ * 36px tall so it is a comfortable tap target on a phone.
  */
 export function Chip({ as: Tag = 'button', active = false, tone = 'line', className, children, ...rest }) {
   const look = active
@@ -17,7 +18,7 @@ export function Chip({ as: Tag = 'button', active = false, tone = 'line', classN
     <Tag
       {...extra}
       className={cx(
-        'inline-flex min-h-8 cursor-pointer items-center gap-1 border px-2 py-1 text-[9px] tracking-[0.18em] uppercase select-none',
+        'inline-flex min-h-9 cursor-pointer items-center gap-1 border px-2.5 py-1 text-[9px] tracking-[0.18em] uppercase select-none disabled:cursor-not-allowed disabled:opacity-40',
         look,
         className,
       )}
@@ -55,6 +56,58 @@ export function TwoTapChip({ onConfirm, confirmLabel = 'Sure?', children, classN
     >
       {armed ? confirmLabel : children}
     </Chip>
+  )
+}
+
+/**
+ * Modal sheet: bottom sheet on phones, right drawer from `sm` up. Escape and
+ * the backdrop close it; the page behind stops scrolling while it is open.
+ */
+export function Sheet({ title, onClose, children, footer, wide = false }) {
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prev
+    }
+  }, [onClose])
+
+  return (
+    <>
+      <div className="fixed inset-0 z-30 bg-sheet/60" onClick={onClose} aria-hidden />
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className={cx(
+          'animate-slide-up motion-reduce:animate-none fixed inset-x-0 bottom-0 z-40 flex max-h-[88dvh] flex-col border-t-2 border-amber bg-sheet shadow-2xl sm:animate-slide-in sm:inset-y-0 sm:right-0 sm:left-auto sm:max-h-none sm:max-w-full sm:border-t-0 sm:border-l-2',
+          wide ? 'sm:w-[520px]' : 'sm:w-[440px]',
+        )}
+      >
+        <header className="flex items-center justify-between gap-3 border-b border-line/40 px-4 py-3 sm:px-5">
+          <h2 className="font-display truncate text-sm tracking-[0.25em] text-ink uppercase">{title}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="-mr-2 flex h-9 w-9 shrink-0 items-center justify-center text-line hover:text-amber"
+          >
+            ✕
+          </button>
+        </header>
+        <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">{children}</div>
+        {footer && (
+          <footer className="flex flex-wrap items-center justify-end gap-2 border-t border-line/40 px-4 py-3 sm:px-5">
+            {footer}
+          </footer>
+        )}
+      </section>
+    </>
   )
 }
 
