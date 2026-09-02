@@ -36,10 +36,13 @@ Lives in `src/data/schema.js` (shapes, defaults, factories, seed) and
 `src/data/store.js` (load, save, migrate, importJSON, exportJSON).
 
 ```
-State    { version, updatedAt, properties[] }
-Property { id, name, address, shape, photo, floors[], bills[] }
+State    { version, updatedAt, properties[] }          // version: 2
+Property { id, name, address, shape, photo, photoSize, view, floors[], bills[] }
   shape: 'gable' | 'flat' | 'mansard' | 'custom'
-  photo: null or a data-URL string
+  photo: null or a data-URL string (JPEG, resized to <= 1200px wide; the
+         original file is never stored)
+  photoSize: null or { w, h } pixel size of the stored photo
+  view: 'drawing' | 'photo'             // which rendering the sheet shows
   bills: building-level costs — taxes, insurance, water, mortgage
 Floor { id, label, units[] }            // label like "3F", "2F", "Street"
 Unit {
@@ -47,12 +50,17 @@ Unit {
   rent, status,                         // status: 'leased' | 'vacant' | 'renovating'
   tenant, leaseStart, leaseEnd,         // dates as 'YYYY-MM-DD' or null
   splittable, isSplit, splitRent,       // for the double single
+  sideOf,                               // 'left' | 'right': side a 'side' unit hangs off
+  photoBox,                             // null or { x, y, w, h } fractions (0-1) of the photo
   bills[], tasks[], notes[]
 }
 Bill  { id, label, amount, cadence, dueDay, paid }   // cadence: 'monthly'|'yearly'|'once'
 Task  { id, text, done, createdAt }
 Note  { id, text, createdAt }
 ```
+
+Schema history: v1 initial; v2 added `photoSize`, `view`, `sideOf`, `photoBox`
+(additive, filled by `normalizeState`, no migration step needed).
 
 - **Split units.** When `isSplit` is true, `rent` is the first half and
   `splitRent` is the second half. When not split, `rent` is the whole unit and
@@ -114,9 +122,29 @@ Amounts are plain numbers in dollars. Round only at display with
   or buildings is hardcoded in components.
 - `floors[0]` is the top floor (seed order: 3F, 2F, Street).
 - A `'side'` unit hangs off the mass on `unit.sideOf` (`'left'` | `'right'`,
-  default right). `sideOf` is written by the UI and preserved by the data
-  layer as an unknown field; promote it to a `makeUnit()` default in the next
-  schema change.
+  default right).
+- **Sheet layout** (`Elevation.jsx`): a figures row with feet on the grade
+  line, then the grade line as a block, then a captions row. Each caption is
+  given `figureWidthFor(property)` so it lines up under its figure, and can
+  grow (structure editor) without moving the grade line.
+- **Structure editor** (`StructureEditor.jsx`, behind the caption's Edit
+  chip): add a floor on top, rename floors, add units, remove units. Guards:
+  a unit is removable only when `isEmptyUnit()` (no rent, tenant, bills,
+  tasks, notes) and with a two-tap confirm; a floor only when it has no
+  units; a building only when it has no units and is not the last one.
+  New buildings come from `newProperty()` in `App.jsx` (two floors, one unit
+  each).
+- **Photo mode** (`PhotoBuilding.jsx`): when `view === 'photo'` and a photo
+  exists, the figure is the photo at `max(totalWidth, 480)` px wide with one
+  translucent box per unit. Boxes drag and resize with Pointer Events
+  (`touch-action: none` on the box and handle, pointer capture, commit on
+  pointer up). Units without a `photoBox` get a starting position from
+  `defaultBoxes()`. Removing the photo keeps every `photoBox`.
+- **Photo storage**: `lib/image.js` resizes to <= 1200px wide and re-encodes
+  as JPEG q0.82 before anything is stored. `App.setPhoto` does a trial
+  `save()` first and refuses the photo with a sized error message if the
+  browser quota is hit. The roof chip is hidden in photo view; the drawing
+  data is untouched by photo mode.
 - Totals (`computeTotals` in `TitleBlock.jsx`): collected counts units whose
   status is `'leased'` only. Vacant and renovating units count toward "if
   fully leased" and the vacancy gap. `'once'` bills are excluded from monthly
