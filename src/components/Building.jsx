@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import UnitBox from './UnitBox.jsx'
 import PhotoBuilding, { PHOTO_MIN_W } from './PhotoBuilding.jsx'
-import StructureEditor from './StructureEditor.jsx'
-import { Chip, TwoTapChip, cx } from './controls.jsx'
+import { Chip, InlineLabel, TwoTapChip, cx } from './controls.jsx'
+import { countUnits } from '../data/ops.js'
 import { PHOTO_MAX_WIDTH, resizeImageFile } from '../lib/image.js'
 
 // All components at module scope (see UnitBox.jsx for why).
@@ -16,6 +16,12 @@ export const SIDE_W = 128 // the box that hangs off the side
 export const SIDE_H = 80 // shorter than a storey
 export const ROOF_OVERHANG = 12
 export const ROOF_CYCLE = ['gable', 'flat', 'mansard']
+
+// Build handles. The unit tab sits inside the mass and the annex tab is
+// absolutely positioned beside it, so turning Build on never changes the
+// figure's width and captions stay lined up under their buildings.
+const UNIT_TAB_W = 26
+const ANNEX_TAB_W = 56
 
 const isMain = (u) => u.position !== 'side'
 const POSITION_ORDER = { left: 0, full: 1, right: 2 }
@@ -61,9 +67,20 @@ export function nextShape(shape) {
   return ROOF_CYCLE[(i + 1) % ROOF_CYCLE.length]
 }
 
+/** The bottom floor is where a side annex is allowed to hang. */
+export function bottomFloorOf(property) {
+  const floors = Array.isArray(property.floors) ? property.floors : []
+  return floors.length ? floors[floors.length - 1] : null
+}
+
 /**
  * One property's figure: the photo with boxes, or the drawing (side boxes,
  * roof, stacked floors). floors[0] is the top floor.
+ *
+ * With `build` on, dashed handles are drawn on the figure: a + floor strip
+ * above the roof, a + tab on each floor, a + annex tab at the outside edge of
+ * the bottom floor, and a ✕ on every empty unit and empty floor. Labels
+ * become editable in place. With it off the drawing is untouched.
  */
 export default function Building({
   property,
@@ -71,6 +88,8 @@ export default function Building({
   onOpenUnit,
   rentScale = 0,
   readOnly = false,
+  build = false,
+  structure = {},
 }) {
   if (isPhotoView(property)) {
     return (
@@ -89,57 +108,110 @@ export default function Building({
   // Floor level markers go on the side with no hanging unit.
   const markerSide = left.length > 0 && right.length === 0 ? 'right' : 'left'
   const boxProps = { onUnitChange, onOpenUnit, rentScale, readOnly }
+  const buildOn = build && !readOnly
+
+  // The annex tab goes on the free edge, and the annex it makes hangs there.
+  const annexSide = right.length === 0 ? 'right' : 'left'
+  const bottom = bottomFloorOf(property)
+  const canAddAnnex = Boolean(bottom) && !(bottom.units ?? []).some((u) => u.position === 'side')
 
   return (
     <div className="flex items-end">
       {left.map((u) => (
-        <SideBox key={u.id} unit={u} edge="left" {...boxProps} />
+        <SideBox
+          key={u.id}
+          unit={u}
+          edge="left"
+          build={buildOn}
+          onRemove={() => structure.removeUnit?.(u.id)}
+          {...boxProps}
+        />
       ))}
 
       <div className="relative" style={{ width: massWidth }}>
+        {buildOn && <AddFloorTab onClick={() => structure.addFloor?.(property.id)} />}
+        {buildOn && canAddAnnex && (
+          <AddAnnexTab side={annexSide} onClick={() => structure.addAnnex?.(property.id, annexSide)} />
+        )}
+
         <Roof shape={property.shape} width={massWidth} />
         <div className="border-x border-b border-line bg-line/5">
           {property.floors.length === 0 && (
             <div className="flex h-16 items-center justify-center border-t border-dashed border-line/50 text-[9px] tracking-widest text-line/50 uppercase">
-              No floors{readOnly ? '' : ' · tap Edit'}
+              No floors{readOnly ? '' : buildOn ? ' · use + floor' : ' · tap Build'}
             </div>
           )}
           {property.floors.map((floor) => (
-            <FloorRow key={floor.id} floor={floor} markerSide={markerSide} {...boxProps} />
+            <FloorRow
+              key={floor.id}
+              floor={floor}
+              propertyId={property.id}
+              markerSide={markerSide}
+              build={buildOn}
+              structure={structure}
+              {...boxProps}
+            />
           ))}
         </div>
       </div>
 
       {right.map((u) => (
-        <SideBox key={u.id} unit={u} edge="right" {...boxProps} />
+        <SideBox
+          key={u.id}
+          unit={u}
+          edge="right"
+          build={buildOn}
+          onRemove={() => structure.removeUnit?.(u.id)}
+          {...boxProps}
+        />
       ))}
     </div>
   )
 }
 
-function FloorRow({ floor, markerSide, onUnitChange, onOpenUnit, rentScale, readOnly }) {
+function FloorRow({
+  floor,
+  propertyId,
+  markerSide,
+  build,
+  structure,
+  onUnitChange,
+  onOpenUnit,
+  rentScale,
+  readOnly,
+}) {
   const units = floor.units
     .filter(isMain)
     .slice()
     .sort((a, b) => (POSITION_ORDER[a.position] ?? 1) - (POSITION_ORDER[b.position] ?? 1))
+  // A floor only goes when nothing at all is on it, annex included.
+  const bare = floor.units.length === 0
 
   return (
     <div className="relative flex border-t border-line" style={{ height: FLOOR_H }}>
       {units.length === 0 && (
-        <div className="flex flex-1 items-center justify-center text-[9px] tracking-widest text-line/40 uppercase">
-          No units on this floor
+        <div className="flex flex-1 items-center justify-center gap-2 text-[9px] tracking-widest text-line/40 uppercase">
+          <span>No units on this floor</span>
+          {build && bare && (
+            <TwoTapChip
+              onConfirm={() => structure.removeFloor?.(propertyId, floor.id)}
+              confirmLabel="Remove floor?"
+              aria-label={`Remove floor ${floor.label || ''}`}
+              className="min-h-7 px-1.5 py-0"
+            >
+              ✕ Floor
+            </TwoTapChip>
+          )}
         </div>
       )}
-      {/* level marker: short tick + label, outside the wall */}
-      <span
-        className={cx(
-          'pointer-events-none absolute top-2 flex items-center gap-1 text-[9px] tracking-[0.2em] whitespace-nowrap text-line/70 uppercase',
-          markerSide === 'left' ? 'right-full mr-1 flex-row' : 'left-full ml-1 flex-row-reverse',
-        )}
-      >
-        {floor.label}
-        <i className="block w-2.5 border-t border-line/60" />
-      </span>
+
+      <FloorMarker
+        floor={floor}
+        side={markerSide}
+        build={build}
+        onRename={(label) => structure.renameFloor?.(propertyId, floor.id, label)}
+      />
+
       {units.map((u) => (
         <UnitBox
           key={u.id}
@@ -147,22 +219,110 @@ function FloorRow({ floor, markerSide, onUnitChange, onOpenUnit, rentScale, read
           variant="main"
           rentScale={rentScale}
           readOnly={readOnly}
+          build={build}
+          onRemove={() => structure.removeUnit?.(u.id)}
           onChange={(patch) => onUnitChange(u.id, patch)}
           onOpen={() => onOpenUnit(u.id)}
         />
       ))}
+
+      {build && (
+        <AddUnitTab label={floor.label} onClick={() => structure.addUnit?.(propertyId, floor.id)} />
+      )}
     </div>
   )
 }
 
+/** Level marker outside the wall: label and a short tick. */
+function FloorMarker({ floor, side, build, onRename }) {
+  return (
+    <span
+      className={cx(
+        'absolute top-2 flex items-center gap-1 text-[9px] tracking-[0.2em] whitespace-nowrap text-line/70 uppercase',
+        !build && 'pointer-events-none',
+        side === 'left' ? 'right-full mr-1 flex-row' : 'left-full ml-1 flex-row-reverse',
+      )}
+    >
+      {build ? (
+        <InlineLabel
+          value={floor.label}
+          onCommit={onRename}
+          placeholder="Floor"
+          ariaLabel="Floor label"
+          title="Tap to rename this floor"
+          className="text-[9px] tracking-[0.2em] text-line uppercase"
+          inputClassName="w-14"
+        />
+      ) : (
+        floor.label
+      )}
+      <i className="block w-2.5 border-t border-line/60" />
+    </span>
+  )
+}
+
+/** Dashed strip above the roof: adds a floor on top. */
+function AddFloorTab({ onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title="Add a floor on top"
+      className="mb-1.5 flex h-7 w-full items-center justify-center border border-dashed border-line/50 text-[9px] tracking-[0.2em] text-line/70 uppercase hover:border-amber hover:bg-amber/5 hover:text-amber"
+    >
+      + Floor
+    </button>
+  )
+}
+
+/** Dashed tab on the right edge of a floor: adds a unit to that floor. */
+function AddUnitTab({ label, onClick }) {
+  const what = `Add a unit to ${label || 'this floor'}`
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={what}
+      aria-label={what}
+      className="flex shrink-0 items-center justify-center border-l border-dashed border-line/60 text-sm text-line/70 hover:bg-amber/10 hover:text-amber"
+      style={{ width: UNIT_TAB_W }}
+    >
+      +
+    </button>
+  )
+}
+
+/**
+ * Dashed tab at the outside edge of the bottom floor: hangs a side annex
+ * there. Absolutely positioned, so Build never nudges the figure sideways.
+ */
+function AddAnnexTab({ side, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title="Hang a side annex off the bottom floor"
+      className={cx(
+        'absolute bottom-0 flex items-center justify-center border border-dashed border-line/50 text-[9px] tracking-[0.16em] text-line/70 uppercase hover:border-amber hover:bg-amber/5 hover:text-amber',
+        side === 'left' ? 'right-full mr-1' : 'left-full ml-1',
+      )}
+      style={{ width: ANNEX_TAB_W, height: SIDE_H }}
+    >
+      + Annex
+    </button>
+  )
+}
+
 /** A one-storey box hanging off the mass, bottom on grade. */
-function SideBox({ unit, edge, onUnitChange, onOpenUnit, rentScale, readOnly }) {
+function SideBox({ unit, edge, onUnitChange, onOpenUnit, rentScale, readOnly, build, onRemove }) {
   return (
     <UnitBox
       unit={unit}
       variant="side"
       rentScale={rentScale}
       readOnly={readOnly}
+      build={build}
+      onRemove={onRemove}
       style={{
         width: SIDE_W,
         height: SIDE_H,
@@ -228,17 +388,19 @@ function Roof({ shape, width }) {
 
 /**
  * Sits under the grade line at the same width as the figure. Holds the roof
- * cycle, drawing/photo toggle, photo upload/remove, and the structure editor.
+ * cycle, drawing/photo toggle, photo upload/remove, and the Build toggle that
+ * puts the handles on the drawing above it.
  */
 export function BuildingCaption({
   property,
   width,
+  build = false,
+  onToggleBuild,
   onPropertyChange,
   onRemoveProperty,
   onSetPhoto,
   onNotice,
 }) {
-  const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
   const photo = hasPhoto(property)
   const photoView = isPhotoView(property)
@@ -320,17 +482,32 @@ export function BuildingCaption({
           </TwoTapChip>
         )}
 
-        <Chip active={editing} onClick={() => setEditing((v) => !v)} title="Add or remove floors and units">
-          {editing ? 'Done' : 'Edit'}
-        </Chip>
+        {/* Build works on the drawing, so it is hidden while the photo is shown */}
+        {!photoView && (
+          <Chip
+            active={build}
+            onClick={onToggleBuild}
+            title="Add or remove floors and units on the drawing"
+          >
+            {build ? 'Done' : 'Build'}
+          </Chip>
+        )}
+
+        {!photoView && build && countUnits(property) === 0 && (
+          <TwoTapChip
+            onConfirm={() => onRemoveProperty(property.id)}
+            confirmLabel="Remove building?"
+            title="Only an empty building can be removed"
+          >
+            ✕ Building
+          </TwoTapChip>
+        )}
       </div>
 
-      {editing && (
-        <StructureEditor
-          property={property}
-          onPropertyChange={onPropertyChange}
-          onRemoveProperty={onRemoveProperty}
-        />
+      {!photoView && build && (
+        <p className="mt-1.5 text-[9px] leading-relaxed tracking-[0.12em] text-line/50 uppercase">
+          Tap a label to rename · ✕ removes an empty unit or floor
+        </p>
       )}
     </div>
   )

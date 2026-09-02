@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { formatDollars, toAmount } from '../data/schema.js'
+import { isEmptyUnit } from '../data/ops.js'
+import { InlineLabel, TwoTapChip } from './controls.jsx'
 import { rentPerRental } from './TitleBlock.jsx'
 
 // Every component in this file is declared at MODULE scope. Never declare a
@@ -21,6 +23,8 @@ const NEXT_STATUS = { leased: 'vacant', vacant: 'renovating', renovating: 'lease
  *   style      geometry from the parent (width/height)
  *   rentScale  highest rent on the sheet; drives the bar along the bottom
  *   readOnly   print view: text instead of inputs, no controls
+ *   build      Build is on for this building: rename in place, remove if empty
+ *   onRemove   () => void              build mode: drop this (empty) unit
  */
 export default function UnitBox({
   unit,
@@ -31,11 +35,15 @@ export default function UnitBox({
   style,
   rentScale = 0,
   readOnly = false,
+  build = false,
+  onRemove,
 }) {
   const vacant = unit.status === 'vacant'
   const renovating = unit.status === 'renovating'
   const split = Boolean(unit.splittable && unit.isSplit)
   const label = unit.name || 'Unit'
+  const building = build && !readOnly
+  const removable = building && Boolean(onRemove) && isEmptyUnit(unit)
 
   // Tapping anywhere on the box opens the detail panel, except on its own
   // controls (rent input, status dot, split, flip), which keep their jobs.
@@ -77,12 +85,23 @@ export default function UnitBox({
 
       <div className="relative flex items-start justify-between gap-1">
         {readOnly ? (
-          <span className="truncate text-[10px] leading-tight tracking-[0.18em] text-ink uppercase">{label}</span>
+          <span className={cx('min-w-0 flex-1', labelClass(label))}>{label}</span>
+        ) : building ? (
+          <InlineLabel
+            value={unit.name}
+            onCommit={(name) => onChange({ name })}
+            placeholder="Unit"
+            ariaLabel={`${label} name`}
+            title="Tap to rename"
+            className="min-w-0 flex-1"
+            textClassName={labelClass(label)}
+            inputClassName="text-[10px] leading-tight tracking-[0.12em] text-ink uppercase"
+          />
         ) : (
           <button
             type="button"
             onClick={onOpen}
-            className="-my-1 min-h-8 truncate py-1 text-left text-[10px] leading-tight tracking-[0.18em] text-ink uppercase hover:text-amber"
+            className={cx('-my-1 min-h-8 flex-1 py-1 hover:text-amber', labelClass(label))}
             title="Open unit"
           >
             {label}
@@ -90,6 +109,17 @@ export default function UnitBox({
         )}
 
         <div className="flex shrink-0 items-center gap-1">
+          {removable && (
+            <TwoTapChip
+              onConfirm={onRemove}
+              confirmLabel="Sure?"
+              aria-label={`Remove ${label}`}
+              title="Remove this empty unit"
+              className="min-h-6 px-1 py-0"
+            >
+              ✕
+            </TwoTapChip>
+          )}
           {!readOnly && unit.splittable && (
             <button
               type="button"
@@ -259,6 +289,18 @@ export function RentBar({ unit, scale }) {
     >
       <div className={cx('h-full', low ? 'bg-amber' : 'bg-line/80')} style={{ width: `${ratio * 100}%` }} />
     </div>
+  )
+}
+
+/**
+ * Unit labels on a narrow box: two lines before anything is cut, and one size
+ * step down for a long name, so "STOREFRONT" reads instead of "STORE…".
+ */
+export function labelClass(label) {
+  const long = String(label ?? '').length > 12
+  return cx(
+    'line-clamp-2 min-w-0 text-left leading-tight break-words text-ink uppercase',
+    long ? 'text-[9px] tracking-[0.08em]' : 'text-[10px] tracking-[0.18em]',
   )
 }
 

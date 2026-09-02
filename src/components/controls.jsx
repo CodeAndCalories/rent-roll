@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 // Small shared controls, all at module scope (see UnitBox.jsx for why).
 
@@ -108,6 +108,82 @@ export function Sheet({ title, onClose, children, footer, wide = false }) {
         )}
       </section>
     </>
+  )
+}
+
+/**
+ * A label that becomes an input in place: tap to edit, Enter or blur commits,
+ * Escape cancels. Used for unit and floor labels while Build is on.
+ *
+ * Escape sets a ref before blurring, because the blur handler that follows
+ * still closes over the old draft.
+ */
+export function InlineLabel({
+  value,
+  onCommit,
+  placeholder = 'Name',
+  ariaLabel,
+  title = 'Rename',
+  className,
+  textClassName,
+  inputClassName,
+}) {
+  const [draft, setDraft] = useState(null) // null = not editing
+  const cancelled = useRef(false)
+  const text = value ?? ''
+
+  if (draft === null) {
+    return (
+      <button
+        type="button"
+        title={title}
+        aria-label={ariaLabel}
+        onClick={() => {
+          cancelled.current = false
+          setDraft(text)
+        }}
+        className={cx(
+          'min-w-0 cursor-text text-left underline decoration-line/40 decoration-dashed underline-offset-4 hover:text-amber',
+          className,
+          textClassName,
+        )}
+      >
+        {text || placeholder}
+      </button>
+    )
+  }
+
+  return (
+    <input
+      autoFocus
+      type="text"
+      value={draft}
+      aria-label={ariaLabel}
+      placeholder={placeholder}
+      autoComplete="off"
+      enterKeyHint="done"
+      onChange={(e) => setDraft(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          e.currentTarget.blur() // the blur commits
+        } else if (e.key === 'Escape') {
+          e.preventDefault()
+          cancelled.current = true
+          e.currentTarget.blur()
+        }
+      }}
+      onBlur={() => {
+        const next = draft.trim()
+        setDraft(null)
+        if (cancelled.current) {
+          cancelled.current = false
+          return
+        }
+        if (next !== text) onCommit(next)
+      }}
+      className={cx('min-w-0 border-b border-amber bg-transparent outline-none', className, inputClassName)}
+    />
   )
 }
 

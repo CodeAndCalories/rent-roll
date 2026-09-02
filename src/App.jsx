@@ -1,12 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { load, save } from './data/store.js'
 import { formatDollars } from './data/schema.js'
 import {
   RuleError,
+  addFloor as opsAddFloor,
   addProperty as opsAddProperty,
+  addSideAnnex as opsAddSideAnnex,
+  addUnit as opsAddUnit,
   patchProperty,
   patchUnit,
+  removeFloor as opsRemoveFloor,
   removeProperty as opsRemoveProperty,
+  removeUnit as opsRemoveUnit,
+  renameFloor as opsRenameFloor,
   sideAnnexCheck,
 } from './data/ops.js'
 import { buildFromTemplate } from './data/templates.js'
@@ -67,6 +73,29 @@ export default function App() {
 
   const updateProperty = useCallback(
     (propertyId, patch) => guarded((s) => patchProperty(s, propertyId, patch)),
+    [guarded],
+  )
+
+  /**
+   * The Build handles on the drawing. Every one of these is an ops call, so a
+   * write that breaks a rule (a second annex, a unit that still holds
+   * something) is refused there and shown as a notice.
+   */
+  const structure = useMemo(
+    () => ({
+      addFloor: (propertyId) => guarded((s) => opsAddFloor(s, propertyId)),
+      addUnit: (propertyId, floorId) => guarded((s) => opsAddUnit(s, propertyId, floorId)),
+      addAnnex: (propertyId, side) => guarded((s) => opsAddSideAnnex(s, propertyId, side)),
+      removeFloor: (propertyId, floorId) => guarded((s) => opsRemoveFloor(s, propertyId, floorId)),
+      renameFloor: (propertyId, floorId, label) =>
+        guarded((s) => opsRenameFloor(s, propertyId, floorId, label)),
+      removeUnit: (unitId) =>
+        guarded((s) => {
+          const next = opsRemoveUnit(s, unitId) // throws when the unit holds anything
+          queueMicrotask(() => setOpenUnitId((cur) => (cur === unitId ? null : cur)))
+          return next
+        }),
+    }),
     [guarded],
   )
 
@@ -184,6 +213,7 @@ export default function App() {
           onRemoveProperty={removeProperty}
           onSetPhoto={setPhoto}
           onNotice={setNotice}
+          structure={structure}
           rentScale={totals.maxRent}
         />
       </div>

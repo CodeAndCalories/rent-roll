@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import Building, { BuildingCaption, figureWidthFor } from './Building.jsx'
 import { Chip } from './controls.jsx'
 
@@ -26,6 +27,9 @@ export function sheetContentWidth(properties, { readOnly = false } = {}) {
  *
  * readOnly (print view): no captions, no add button, no inputs.
  * With no properties at all the sheet shows the first-run empty state.
+ *
+ * One building at a time can be in Build mode (the handles drawn on the
+ * figure). Which one is UI state and is never stored.
  */
 export default function Elevation({
   properties,
@@ -36,9 +40,11 @@ export default function Elevation({
   onRemoveProperty = noop,
   onSetPhoto = noop,
   onNotice = noop,
+  structure = {},
   rentScale = 0,
   readOnly = false,
 }) {
+  const [buildId, setBuildId] = useState(null)
   const list = Array.isArray(properties) ? properties : []
 
   if (list.length === 0 && !readOnly) {
@@ -57,6 +63,8 @@ export default function Elevation({
               property={p}
               onUnitChange={onUnitChange}
               onOpenUnit={onOpenUnit}
+              build={buildId === p.id}
+              structure={structure}
               rentScale={rentScale}
               readOnly={readOnly}
             />
@@ -76,6 +84,8 @@ export default function Elevation({
                 key={p.id}
                 property={p}
                 width={figureWidthFor(p)}
+                build={buildId === p.id}
+                onToggleBuild={() => setBuildId((cur) => (cur === p.id ? null : p.id))}
                 onPropertyChange={onPropertyChange}
                 onRemoveProperty={onRemoveProperty}
                 onSetPhoto={onSetPhoto}
