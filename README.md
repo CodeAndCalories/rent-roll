@@ -1,0 +1,70 @@
+# Rent Roll
+
+A private, single-user tool for managing two adjacent rental buildings in
+Cleveland Heights, Ohio.
+
+- **Building A — 2107 Fairview.** 6 units: a street-level storefront that juts
+  off the side, a "double single" first-floor unit that can optionally be split
+  into two rentals, two units on the second floor, two on the third.
+- **Building B — next door.** A stacked duplex, 2 units.
+
+The UI is an architectural blueprint elevation: a dark navy sheet with a
+drafting grid, cyan line work, and monospace type. Each unit is a box on the
+drawing, and rent is typed directly into the box.
+
+There is no backend. All data lives in the browser's `localStorage`.
+
+## Stack
+
+- [Vite](https://vite.dev/) + [React](https://react.dev/) (JavaScript, not TypeScript)
+- [Tailwind CSS v4](https://tailwindcss.com/) via `@tailwindcss/vite`
+- No state library, no router, no UI kit
+
+## Run locally
+
+Requires Node 20+ (developed on Node 24).
+
+```sh
+npm install
+npm run dev
+```
+
+The dev server binds to <http://localhost:5173> and will **fail rather than
+pick another port** if 5173 is taken (`strictPort: true`). It never opens a
+browser on its own; open the URL yourself. Stop it with `Ctrl-C`.
+
+Other scripts:
+
+```sh
+npm run build     # production build to ./dist
+npm run preview   # serve ./dist on http://localhost:4173 (also strictPort)
+```
+
+## Deploy to Vercel
+
+This is a static Vite site, so Vercel's zero-config Vite preset works.
+
+1. Push the repo to GitHub (`CodeAndCalories/rent-roll`).
+2. In Vercel, **Add New → Project**, import the GitHub repo.
+3. Vercel auto-detects **Framework Preset: Vite**. Confirm the defaults:
+   - Build Command: `npm run build`
+   - Output Directory: `dist`
+   - Install Command: `npm install`
+4. No environment variables are needed.
+5. Click **Deploy**. Every push to `main` redeploys automatically.
+
+Or from the CLI:
+
+```sh
+npm i -g vercel
+vercel          # first deploy, follow the prompts
+vercel --prod   # production deploy
+```
+
+Because data is stored in `localStorage`, it is per browser and per device.
+Nothing is synced to Vercel or anywhere else.
+
+## Data safety
+
+This app holds real rental data. See `CLAUDE.md` for the rules about never
+deleting or overwriting `localStorage` without an explicit migration.
