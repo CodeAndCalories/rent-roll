@@ -6,15 +6,19 @@
 // Data model (recorded verbatim in CLAUDE.md):
 //
 //   State    { version, updatedAt, properties[] }
-//   Property { id, name, address, shape, photo, floors[], bills[] }
+//   Property { id, name, address, shape, photo, photoSize, view, floors[], bills[] }
 //     shape: 'gable' | 'flat' | 'mansard' | 'custom'
-//     photo: null or a data-URL string
+//     photo: null or a data-URL string (resized to <= 1200px wide before storing)
+//     photoSize: null or { w, h } pixel size of the stored photo
+//     view: 'drawing' | 'photo'            // which rendering the sheet shows
 //     bills: building-level costs (taxes, insurance, water, mortgage)
 //   Floor    { id, label, units[] }           // label like "3F", "2F", "Street"
 //   Unit     { id, name, position,            // position: 'left' | 'right' | 'full' | 'side'
 //              rent, status,                  // status: 'leased' | 'vacant' | 'renovating'
 //              tenant, leaseStart, leaseEnd,
 //              splittable, isSplit, splitRent, // for the double single
+//              sideOf,                        // 'left' | 'right': which side a 'side' unit hangs off
+//              photoBox,                      // null or { x, y, w, h } as fractions (0-1) of the photo
 //              bills[], tasks[], notes[] }
 //   Bill     { id, label, amount, cadence, dueDay, paid } // cadence: 'monthly'|'yearly'|'once'
 //   Task     { id, text, done, createdAt }
@@ -27,12 +31,16 @@
 // `splitRent` is the second half's rent. When not split, `rent` is the whole
 // unit and `splitRent` is ignored (but kept).
 
-export const SCHEMA_VERSION = 1
+// v1: initial. v2: + property.photoSize, property.view, unit.sideOf,
+// unit.photoBox (all additive; filled by normalizeState, no migration step).
+export const SCHEMA_VERSION = 2
 
 export const SHAPES = ['gable', 'flat', 'mansard', 'custom']
 export const POSITIONS = ['left', 'right', 'full', 'side']
 export const STATUSES = ['leased', 'vacant', 'renovating']
 export const CADENCES = ['monthly', 'yearly', 'once']
+export const VIEWS = ['drawing', 'photo']
+export const SIDES = ['left', 'right']
 
 // ---------------------------------------------------------------------------
 // ids
@@ -120,6 +128,8 @@ export function makeUnit(fields = {}) {
     splittable: false,
     isSplit: false,
     splitRent: 0,
+    sideOf: 'right',
+    photoBox: null,
     bills: [],
     tasks: [],
     notes: [],
@@ -149,6 +159,8 @@ export function makeProperty(fields = {}) {
     address: '',
     shape: 'gable',
     photo: null,
+    photoSize: null,
+    view: 'drawing',
     floors: [],
     bills: [],
     ...fields,
