@@ -61,6 +61,21 @@
   );
 }
 
+/* Print / Save-as-PDF view. The elevation is wider than a page, so the
+   .print-fit wrapper is zoomed by a factor the view computes. */
+@page {
+  margin: 12mm;
+}
+@media print {
+  body {
+    background: #fff;
+  }
+  .print-fit {
+    zoom: var(--print-zoom, 1);
+    overflow: visible;
+  }
+}
+
 @layer base {
   html,
   body,
