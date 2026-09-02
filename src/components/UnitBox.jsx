@@ -149,7 +149,7 @@ export function StatusDot({ status, onClick }) {
  * commits toAmount(draft) on every change so totals update live; tidies the
  * draft on blur. External changes (import) are picked up when unfocused.
  */
-export function RentInput({ value, onCommit, ariaLabel }) {
+export function RentInput({ value, onCommit, ariaLabel, compact = false }) {
   const [draft, setDraft] = useState(() => toDraft(value))
   const ref = useRef(null)
 
@@ -176,7 +176,10 @@ export function RentInput({ value, onCommit, ariaLabel }) {
           onCommit(toAmount(raw))
         }}
         onBlur={() => setDraft(toDraft(value))}
-        className="w-full min-w-0 bg-transparent text-lg leading-tight text-ink tabular-nums outline-none placeholder:text-line/30"
+        className={cx(
+          'w-full min-w-0 bg-transparent leading-tight text-ink tabular-nums outline-none placeholder:text-line/30',
+          compact ? 'text-sm' : 'text-lg',
+        )}
       />
     </label>
   )
