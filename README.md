@@ -1,7 +1,8 @@
 # Rent Roll
 
-A private, single-user tool for managing two adjacent rental buildings in
-Cleveland Heights, Ohio.
+A private, single-user tool for managing a small rental portfolio: any
+number of buildings, floors, and units, each drawn as a blueprint elevation.
+Built first for two adjacent buildings in Cleveland Heights, Ohio:
 
 - **Building A — 2107 Fairview.** 6 units: a street-level storefront that juts
   off the side, a "double single" first-floor unit that can optionally be split
@@ -11,6 +12,9 @@ Cleveland Heights, Ohio.
 The UI is an architectural blueprint elevation: a dark navy sheet with a
 drafting grid, cyan line work, and monospace type. Each unit is a box on the
 drawing, and rent is typed directly into the box.
+
+A fresh install starts with an empty sheet; buildings are added from templates
+(single family, duplexes, triplex, fourplex, mixed use, blank).
 
 There is no backend. All data lives in the browser's `localStorage`.
 

@@ -32,11 +32,13 @@ units. Any change to the stored shape must:
 
 ## Data model
 
-Lives in `src/data/schema.js` (shapes, defaults, factories, seed) and
-`src/data/store.js` (load, save, migrate, importJSON, exportJSON).
+Lives in `src/data/schema.js` (shapes, defaults, factories, empty seed),
+`src/data/store.js` (load, save, migrate, importJSON, exportJSON),
+`src/data/ops.js` (writes that enforce rules), `src/data/templates.js`
+(building templates as data), and `src/data/totals.js` (totals math).
 
 ```
-State    { version, updatedAt, properties[] }          // version: 3
+State    { version, updatedAt, properties[] }          // version: 4
 Property { id, name, address, shape, photo, photoSize, view, floors[], bills[] }
   shape: 'gable' | 'flat' | 'mansard' | 'custom'
   photo: null or a data-URL string (JPEG, resized to <= 1200px wide; the
@@ -60,22 +62,43 @@ Note  { id, text, createdAt }
 ```
 
 Schema history: v1 initial; v2 added `photoSize`, `view`, `sideOf` (default
-`'right'`), `photoBox`; v3 changed the `sideOf` default to `'left'`. All
-additive, filled by `normalizeState`, no migration step needed. A stored
-`sideOf` is always kept; the default only applies to units that have none.
-`tests/migration-v3.test.mjs` (run with `npm test`) loads a saved v2 store and
-asserts nothing changes.
+`'right'`), `photoBox`; v3 changed the `sideOf` default to `'left'`; v4 has no
+field changes (empty seed, rules enforced in `ops.js`). All additive, filled
+by `normalizeState`, no migration step needed. A stored `sideOf` is always
+kept; the default only applies to units that have none. `npm test` runs
+`tests/migration.test.mjs` (a saved v2 store loads with nothing lost) and
+`tests/portfolio.test.mjs` (empty seed, templates, rules, selection, totals).
+
+### Rules enforced in the data layer (`ops.js`)
+
+- All unit and property writes from the UI go through `patchUnit` /
+  `patchProperty` / `setSideAnnex` / `setSplittable` / `removeProperty`.
+  A write that would break a rule throws `RuleError` and the state is
+  unchanged; App shows the message as a notice.
+- **Side annex** (`position: 'side'`): only on the bottom floor
+  (`floors[floors.length - 1]`), one per floor. `sideAnnexCheck(state,
+  unitId)` gives `{ ok, reason }` for the UI. Toggling an annex on or off
+  relays out the floor's main units (one → full, two → left/right).
+  Older data that already breaks the rule is never rejected for unrelated
+  edits: a property patch is refused only if it adds a violation.
+- **Splittable** is per unit. `splittable: false` forces `isSplit: false`;
+  `splitRent` is kept (not counted) so splitting again restores it. The
+  panel warns before turning splittable off on a split unit with a second
+  rent.
+- **Removing a building** is refused while it has units. The last building
+  may be removed; an empty sheet is a valid store.
 
 - **Split units.** When `isSplit` is true, `rent` is the first half and
   `splitRent` is the second half. When not split, `rent` is the whole unit and
   `splitRent` is ignored but kept.
-- **Seed** (`seedData()`): "2107 Fairview" (gable) with floors 3F ("3F Front"
-  left / "3F Rear" right), 2F ("2F Front" / "2F Rear"), Street ("Double
-  single" full-width + splittable, "Storefront" side); "Duplex" (gable) with
-  2F "Upper" and 1F "Lower". Rents are 0. Each property starts with four
-  building bills at 0: Mortgage, Property taxes, Insurance, Water. Seed
-  changes never rename units in an existing store: the seed is only used
-  when storage is empty or unreadable.
+- **Seed** (`seedData()`) is an EMPTY sheet. Buildings come from
+  `src/data/templates.js`: Single family, Duplex (stacked), Duplex (side by
+  side), Triplex, Fourplex, Mixed use w/ storefront, Blank. Templates are
+  data only (floors top-first, units with positions, roof shape);
+  `buildFromTemplate(id, name)` makes a Property with fresh ids, rents at 0,
+  and four building bills at 0 (Mortgage, Property taxes, Insurance, Water).
+  Never hardcode a building, unit count, or unit name into a component.
+  The seed is only used when storage is empty or unreadable.
 - **Ids** are stable strings. Seed ids are readable (`fairview-3f-left`);
   new entities get `newId(prefix)`.
 
@@ -84,7 +107,8 @@ asserts nothing changes.
 - localStorage key `rentroll:v1`. `SCHEMA_VERSION` is in `schema.js`.
 - Every `save()` writes the whole state object stamped with `version` and
   `updatedAt`. It refuses to write a non-state value, and refuses to write
-  zero properties over a non-empty store unless `{ allowEmpty: true }`.
+  zero properties while the stored state still holds units unless
+  `{ allowEmpty: true }`. An empty sheet over a unit-less store is fine.
 - On `load()`, an older `version` runs `migrate()`, which ADDS missing fields
   with defaults via `normalizeState()`. Unknown fields are never dropped.
   Explicit steps go in `MIGRATIONS[n]` (n → n+1) and must be additive and
@@ -153,6 +177,18 @@ Amounts are plain numbers in dollars. Round only at display with
   data is untouched by photo mode.
 - **Toolbar** (under the header): Raise rents, Undo (while a raise is
   undoable), Print / PDF, Backup. Chips are 40px tall for phones.
+- **Building picker** (`BuildingPicker.jsx`, under the toolbar, hidden with
+  fewer than two buildings): "All" or one building. Selection is UI state
+  only (`lib/selection.js`): more than `SIDE_BY_SIDE_MAX` (3) buildings
+  defaults to one at a time, otherwise side by side. The sheet draws
+  `displayedProperties`; **the title block, header readout, raise-rents
+  sheet, print view, and backup always use the whole portfolio**. The title
+  block says "Showing X only · totals cover all N buildings" when filtered.
+- **Template picker** (`TemplatePicker.jsx`): opened by the empty-state
+  action and the "+ Building" ghost; asks for a name, maps over `TEMPLATES`.
+- **Unit panel → Layout row**: Splittable toggle and Side annex toggle (with
+  Left / Right when on). The annex box is disabled with the reason from
+  `sideAnnexCheck`; the rule itself lives in `ops.js`.
 - **Raise all rents** (`RaiseRents.jsx`): `planRaise()` builds a list of
   {unitId, before, after} for leased units with a rent (both halves of a
   split unit); `applyChanges(state, changes, 'after' | 'before')` applies or
@@ -192,10 +228,11 @@ Amounts are plain numbers in dollars. Round only at display with
   floors, side boxes, caption, geometry constants), `UnitBox.jsx` (box, rent
   input, status dot, split party wall), `TitleBlock.jsx` (totals),
   `UnitPanel.jsx` (detail panel: header fields + Bills / List / Updates tabs).
-- Unit edits flow through `updateUnit(unitId, patch)` in `App.jsx`, where
-  `patch` is a partial unit or a function `(unit) => partial`. Use the
-  function form for anything that appends to or filters `bills`, `tasks`, or
-  `notes` so two quick edits never clobber each other.
+- Unit edits flow through `updateUnit(unitId, patch)` in `App.jsx`, which
+  calls `ops.patchUnit`; `patch` is a partial unit or a function
+  `(unit) => partial`. Use the function form for anything that appends to or
+  filters `bills`, `tasks`, or `notes` so two quick edits never clobber each
+  other. A `RuleError` from ops is shown as a notice and the state is kept.
 - The panel is a bottom sheet under `sm` and a right drawer from `sm` up.
   Tapping anywhere on a unit box opens it, except on the box's own controls
   (`UnitBox.handleBoxTap` ignores buttons, inputs, selects, labels).
