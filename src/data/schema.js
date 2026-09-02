@@ -220,16 +220,16 @@ export function seedData() {
             id: 'fairview-3f',
             label: '3F',
             units: [
-              { id: 'fairview-3f-left', name: '3F Left', position: 'left' },
-              { id: 'fairview-3f-right', name: '3F Right', position: 'right' },
+              { id: 'fairview-3f-left', name: '3F Front', position: 'left' },
+              { id: 'fairview-3f-right', name: '3F Rear', position: 'right' },
             ],
           },
           {
             id: 'fairview-2f',
             label: '2F',
             units: [
-              { id: 'fairview-2f-left', name: '2F Left', position: 'left' },
-              { id: 'fairview-2f-right', name: '2F Right', position: 'right' },
+              { id: 'fairview-2f-left', name: '2F Front', position: 'left' },
+              { id: 'fairview-2f-right', name: '2F Rear', position: 'right' },
             ],
           },
           {
