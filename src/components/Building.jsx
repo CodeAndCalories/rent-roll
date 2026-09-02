@@ -1,4 +1,9 @@
+import { useState } from 'react'
 import UnitBox from './UnitBox.jsx'
+import PhotoBuilding, { PHOTO_MIN_W } from './PhotoBuilding.jsx'
+import StructureEditor from './StructureEditor.jsx'
+import { Chip, TwoTapChip, cx } from './controls.jsx'
+import { PHOTO_MAX_WIDTH, resizeImageFile } from '../lib/image.js'
 
 // All components at module scope (see UnitBox.jsx for why).
 
@@ -10,7 +15,7 @@ export const FLOOR_H = 104 // one storey
 export const SIDE_W = 128 // the box that hangs off the side
 export const SIDE_H = 80 // shorter than a storey
 export const ROOF_OVERHANG = 12
-export const CAPTION_H = 76 // name + address strip under the grade line
+export const ROOF_CYCLE = ['gable', 'flat', 'mansard']
 
 const isMain = (u) => u.position !== 'side'
 const POSITION_ORDER = { left: 0, full: 1, right: 2 }
@@ -32,61 +37,74 @@ export function layoutFor(property) {
   }
 }
 
-// Which side a 'side' unit hangs off. Stored on the unit as `sideOf`; the
-// data layer keeps it as an unknown field until it is promoted to the schema.
+/** Which side a 'side' unit hangs off. */
 export function sideOf(unit) {
   return unit.sideOf === 'left' ? 'left' : 'right'
 }
 
+export function hasPhoto(property) {
+  return typeof property.photo === 'string' && property.photo.startsWith('data:image/')
+}
+
+export function isPhotoView(property) {
+  return property.view === 'photo' && hasPhoto(property)
+}
+
+/** On-sheet width of the figure, whichever mode it is drawn in. */
+export function figureWidthFor(property) {
+  const layout = layoutFor(property)
+  return isPhotoView(property) ? Math.max(layout.totalWidth, PHOTO_MIN_W) : layout.totalWidth
+}
+
+export function nextShape(shape) {
+  const i = ROOF_CYCLE.indexOf(shape)
+  return ROOF_CYCLE[(i + 1) % ROOF_CYCLE.length]
+}
+
 /**
- * One property: side boxes, roof, stacked floors, caption.
- * floors[0] is the top floor (matches the seed: 3F, 2F, Street).
+ * One property's figure: the photo with boxes, or the drawing (side boxes,
+ * roof, stacked floors). floors[0] is the top floor.
  */
-export default function Building({ property, onUnitChange, onPropertyChange, onOpenUnit }) {
+export default function Building({ property, onUnitChange, onOpenUnit }) {
+  if (isPhotoView(property)) {
+    return (
+      <PhotoBuilding
+        property={property}
+        width={figureWidthFor(property)}
+        onUnitChange={onUnitChange}
+        onOpenUnit={onOpenUnit}
+      />
+    )
+  }
+
   const { massWidth, left, right } = layoutFor(property)
   // Floor level markers go on the side with no hanging unit.
   const markerSide = left.length > 0 && right.length === 0 ? 'right' : 'left'
 
   return (
-    <div className="flex flex-col">
-      <div className="flex items-end">
-        {left.map((u) => (
-          <SideBox
-            key={u.id}
-            unit={u}
-            edge="left"
-            onUnitChange={onUnitChange}
-            onOpenUnit={onOpenUnit}
-          />
-        ))}
+    <div className="flex items-end">
+      {left.map((u) => (
+        <SideBox key={u.id} unit={u} edge="left" onUnitChange={onUnitChange} onOpenUnit={onOpenUnit} />
+      ))}
 
-        <div className="relative" style={{ width: massWidth }}>
-          <Roof shape={property.shape} width={massWidth} />
-          <div className="border-x border-b border-line bg-line/5">
-            {property.floors.map((floor) => (
-              <FloorRow
-                key={floor.id}
-                floor={floor}
-                markerSide={markerSide}
-                onUnitChange={onUnitChange}
-                onOpenUnit={onOpenUnit}
-              />
-            ))}
-          </div>
+      <div className="relative" style={{ width: massWidth }}>
+        <Roof shape={property.shape} width={massWidth} />
+        <div className="border-x border-b border-line bg-line/5">
+          {property.floors.map((floor) => (
+            <FloorRow
+              key={floor.id}
+              floor={floor}
+              markerSide={markerSide}
+              onUnitChange={onUnitChange}
+              onOpenUnit={onOpenUnit}
+            />
+          ))}
         </div>
-
-        {right.map((u) => (
-          <SideBox
-            key={u.id}
-            unit={u}
-            edge="right"
-            onUnitChange={onUnitChange}
-            onOpenUnit={onOpenUnit}
-          />
-        ))}
       </div>
 
-      <Caption property={property} onPropertyChange={onPropertyChange} />
+      {right.map((u) => (
+        <SideBox key={u.id} unit={u} edge="right" onUnitChange={onUnitChange} onOpenUnit={onOpenUnit} />
+      ))}
     </div>
   )
 }
@@ -187,38 +205,116 @@ function Roof({ shape, width }) {
   )
 }
 
-const ROOF_CHOICES = ['gable', 'flat', 'mansard']
+// ---------------------------------------------------------------------------
+// caption: name, address, and the per-building controls
+// ---------------------------------------------------------------------------
 
-/** Name + address under the grade line, and the roof-shape control. */
-function Caption({ property, onPropertyChange }) {
+/**
+ * Sits under the grade line at the same width as the figure. Holds the roof
+ * cycle, drawing/photo toggle, photo upload/remove, and the structure editor.
+ */
+export function BuildingCaption({
+  property,
+  width,
+  onPropertyChange,
+  onRemoveProperty,
+  onSetPhoto,
+  onNotice,
+}) {
+  const [editing, setEditing] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const photo = hasPhoto(property)
+  const photoView = isPhotoView(property)
+  const patch = (p) => onPropertyChange(property.id, p)
+
+  const pickFile = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // allow picking the same file again later
+    if (!file) return
+    setBusy(true)
+    try {
+      const result = await resizeImageFile(file, PHOTO_MAX_WIDTH)
+      onSetPhoto(property.id, result)
+    } catch (err) {
+      onNotice({ tone: 'alert', text: `Could not use that image: ${err?.message ?? err}.` })
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
-    <div className="flex items-start justify-between gap-3 pt-7" style={{ height: CAPTION_H }}>
-      <div className="min-w-0">
-        <div className="font-display truncate text-sm tracking-[0.25em] text-ink uppercase">
-          {property.name || 'Property'}
-        </div>
-        {property.address && (
-          <div className="mt-0.5 truncate text-[10px] text-line/70">{property.address}</div>
+    <div style={{ width }} className="pt-2">
+      <input
+        type="text"
+        value={property.name ?? ''}
+        onChange={(e) => patch({ name: e.target.value })}
+        placeholder="Building name"
+        aria-label="Building name"
+        autoComplete="off"
+        className="font-display w-full min-w-0 border-b border-transparent bg-transparent py-0.5 text-sm tracking-[0.25em] text-ink uppercase outline-none placeholder:text-line/30 focus:border-amber"
+      />
+      <input
+        type="text"
+        value={property.address ?? ''}
+        onChange={(e) => patch({ address: e.target.value })}
+        placeholder="Address"
+        aria-label="Address"
+        autoComplete="off"
+        className="mt-0.5 w-full min-w-0 border-b border-transparent bg-transparent py-0.5 text-[10px] text-line/70 outline-none placeholder:text-line/30 focus:border-amber"
+      />
+
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        {!photoView && (
+          <Chip onClick={() => patch({ shape: nextShape(property.shape) })} title="Cycle roof shape">
+            Roof · {property.shape} ⟳
+          </Chip>
         )}
+
+        {photo && (
+          <div className="inline-flex" role="group" aria-label="View mode">
+            <Chip active={!photoView} onClick={() => patch({ view: 'drawing' })}>
+              Drawing
+            </Chip>
+            <Chip active={photoView} onClick={() => patch({ view: 'photo' })} className="-ml-px">
+              Photo
+            </Chip>
+          </div>
+        )}
+
+        <Chip as="label" className={cx(busy && 'opacity-60')} title="Pick a Street View screenshot">
+          <input
+            type="file"
+            accept="image/*"
+            onChange={pickFile}
+            disabled={busy}
+            aria-label={photo ? 'Replace photo' : 'Add photo'}
+            className="sr-only"
+          />
+          {busy ? 'Resizing…' : photo ? 'Replace photo' : 'Add photo'}
+        </Chip>
+
+        {photo && (
+          <TwoTapChip
+            onConfirm={() => patch({ photo: null, photoSize: null, view: 'drawing' })}
+            confirmLabel="Remove photo?"
+            title="Removes the photo only; the drawing and box positions stay"
+          >
+            Remove photo
+          </TwoTapChip>
+        )}
+
+        <Chip active={editing} onClick={() => setEditing((v) => !v)} title="Add or remove floors and units">
+          {editing ? 'Done' : 'Edit'}
+        </Chip>
       </div>
-      <label className="flex shrink-0 items-center gap-1 text-[10px] tracking-widest text-line/70 uppercase">
-        Roof
-        <select
-          value={ROOF_CHOICES.includes(property.shape) ? property.shape : 'flat'}
-          onChange={(e) => onPropertyChange(property.id, { shape: e.target.value })}
-          className="border border-line/40 bg-sheet px-1.5 py-1.5 text-[10px] tracking-widest text-line uppercase"
-        >
-          {ROOF_CHOICES.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
-      </label>
+
+      {editing && (
+        <StructureEditor
+          property={property}
+          onPropertyChange={onPropertyChange}
+          onRemoveProperty={onRemoveProperty}
+        />
+      )}
     </div>
   )
-}
-
-function cx(...parts) {
-  return parts.filter(Boolean).join(' ')
 }
