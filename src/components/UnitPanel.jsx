@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   CADENCES,
+  SIDES,
   STATUSES,
   formatDollars,
   makeBill,
   makeNote,
   makeTask,
+  toAmount,
 } from '../data/schema.js'
 import { billMonthly } from './TitleBlock.jsx'
 import { RentInput } from './UnitBox.jsx'
+import { Chip } from './controls.jsx'
 
 // Every component in this file is declared at MODULE scope (see UnitBox.jsx).
 //
@@ -32,8 +35,9 @@ const RENEW_WINDOW_DAYS = 60
  *   onChange    (patch | (unit) => patch) => void
  *   onClose     () => void
  *   initialTab  'bills' | 'list' | 'updates'
+ *   context     { sideAnnex: { ok, reason } } from ops.sideAnnexCheck
  */
-export default function UnitPanel({ unit, onChange, onClose, initialTab = 'bills' }) {
+export default function UnitPanel({ unit, onChange, onClose, initialTab = 'bills', context = {} }) {
   const [tab, setTab] = useState(initialTab)
 
   // Escape closes; the page behind the sheet stops scrolling while open.
@@ -66,7 +70,7 @@ export default function UnitPanel({ unit, onChange, onClose, initialTab = 'bills
         aria-label={`${unit.name || 'Unit'} detail`}
         className="animate-slide-up motion-reduce:animate-none fixed inset-x-0 bottom-0 z-40 flex max-h-[88dvh] flex-col border-t-2 border-amber bg-sheet shadow-2xl sm:animate-slide-in sm:inset-y-0 sm:right-0 sm:left-auto sm:max-h-none sm:w-[440px] sm:max-w-full sm:border-t-0 sm:border-l-2"
       >
-        <PanelHeader unit={unit} onChange={onChange} onClose={onClose} />
+        <PanelHeader unit={unit} onChange={onChange} onClose={onClose} context={context} />
 
         <nav role="tablist" className="flex border-b border-line/40 px-2 sm:px-3">
           {TABS.map((t) => (
@@ -105,7 +109,7 @@ export default function UnitPanel({ unit, onChange, onClose, initialTab = 'bills
 // header: name, rent, status, tenant, lease dates
 // ---------------------------------------------------------------------------
 
-function PanelHeader({ unit, onChange, onClose }) {
+function PanelHeader({ unit, onChange, onClose, context }) {
   const split = Boolean(unit.splittable && unit.isSplit)
   const flag = leaseFlag(unit.leaseEnd)
 
@@ -171,7 +175,114 @@ function PanelHeader({ unit, onChange, onClose }) {
           />
         </Field>
       </div>
+
+      <LayoutRow unit={unit} onChange={onChange} context={context} />
     </header>
+  )
+}
+
+/**
+ * Per-unit layout toggles: splittable, side annex (+ which side).
+ * The side-annex rule (bottom floor only, one per floor) is enforced in
+ * ops.js; here the box is disabled with the reason when it would fail.
+ * Turning splittable off while split with a second rent asks first.
+ */
+function LayoutRow({ unit, onChange, context }) {
+  const [confirmUnsplit, setConfirmUnsplit] = useState(false)
+  const isSide = unit.position === 'side'
+  const annex = context?.sideAnnex ?? { ok: true }
+  const secondRent = toAmount(unit.splitRent)
+  const needsWarning = Boolean(unit.splittable && unit.isSplit && secondRent > 0)
+  const side = unit.sideOf === 'right' ? 'right' : 'left'
+
+  const toggleSplittable = (on) => {
+    if (on) {
+      setConfirmUnsplit(false)
+      onChange({ splittable: true })
+      return
+    }
+    if (needsWarning) {
+      setConfirmUnsplit(true)
+      return
+    }
+    onChange({ splittable: false, isSplit: false })
+  }
+
+  return (
+    <div className="mt-3 border-t border-line/30 pt-3">
+      <div className="text-[9px] tracking-[0.2em] text-line/70 uppercase">Layout</div>
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <label className="flex min-h-9 items-center gap-2 text-[10px] tracking-widest text-ink uppercase">
+          <input
+            type="checkbox"
+            checked={Boolean(unit.splittable)}
+            onChange={(e) => toggleSplittable(e.target.checked)}
+            className="h-4 w-4 accent-amber"
+          />
+          Splittable
+        </label>
+
+        <label
+          className={cx(
+            'flex min-h-9 items-center gap-2 text-[10px] tracking-widest uppercase',
+            isSide || annex.ok ? 'text-ink' : 'text-line/40',
+          )}
+        >
+          <input
+            type="checkbox"
+            checked={isSide}
+            disabled={!isSide && !annex.ok}
+            onChange={(e) => onChange({ position: e.target.checked ? 'side' : 'full' })}
+            className="h-4 w-4 accent-amber disabled:opacity-40"
+          />
+          Side annex
+        </label>
+
+        {isSide && (
+          <div role="radiogroup" aria-label="Annex side" className="inline-flex">
+            {SIDES.map((s) => (
+              <button
+                key={s}
+                type="button"
+                role="radio"
+                aria-checked={side === s}
+                onClick={() => onChange({ sideOf: s })}
+                className={cx(
+                  'min-h-9 border px-2.5 text-[9px] tracking-widest uppercase',
+                  s === 'right' && '-ml-px',
+                  side === s ? 'border-amber bg-amber text-sheet' : 'border-line/40 text-line/70 hover:text-ink',
+                )}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {!isSide && !annex.ok && <p className="mt-1 text-[10px] text-line/50">{annex.reason}</p>}
+
+      {confirmUnsplit && (
+        <div className="mt-2 border border-alert/60 bg-alert/5 p-2 text-xs">
+          <p className="text-ink">
+            This unit is split. Turning splittable off stops counting the second rent of{' '}
+            {formatDollars(secondRent)}. The number is kept and comes back if you split again.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Chip onClick={() => setConfirmUnsplit(false)}>Keep split</Chip>
+            <Chip
+              tone="alert"
+              onClick={() => {
+                setConfirmUnsplit(false)
+                onChange({ splittable: false, isSplit: false })
+              }}
+            >
+              Turn off
+            </Chip>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
