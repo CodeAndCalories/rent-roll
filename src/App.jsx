@@ -3,6 +3,7 @@ import { load, save } from './data/store.js'
 import { formatDollars } from './data/schema.js'
 import Elevation from './components/Elevation.jsx'
 import TitleBlock, { computeTotals } from './components/TitleBlock.jsx'
+import UnitPanel from './components/UnitPanel.jsx'
 
 // All components at module scope (see components/UnitBox.jsx for why).
 
@@ -30,6 +31,8 @@ export default function App() {
     }))
   }, [])
 
+  const closePanel = useCallback(() => setOpenUnitId(null), [])
+
   const openUnit = openUnitId ? findUnit(state, openUnitId) : null
   const totals = computeTotals(state.properties)
 
@@ -48,7 +51,14 @@ export default function App() {
 
       <TitleBlock totals={totals} saveError={saveError} />
 
-      {openUnit && <UnitPanelStub unit={openUnit} onClose={() => setOpenUnitId(null)} />}
+      {openUnit && (
+        <UnitPanel
+          key={openUnit.id}
+          unit={openUnit}
+          onChange={(patch) => updateUnit(openUnit.id, patch)}
+          onClose={closePanel}
+        />
+      )}
     </div>
   )
 }
@@ -74,47 +84,23 @@ function SheetHeader({ warnings, collected }) {
   )
 }
 
-/** Placeholder for the unit detail panel (next phase). */
-function UnitPanelStub({ unit, onClose }) {
-  return (
-    <div
-      role="dialog"
-      aria-label={`${unit.name} detail`}
-      className="fixed inset-x-0 bottom-0 z-30 border-t-2 border-amber bg-sheet px-4 py-3 sm:px-8"
-    >
-      <div className="flex items-center justify-between gap-4">
-        <div className="min-w-0">
-          <div className="font-display truncate text-sm tracking-[0.25em] text-ink uppercase">
-            {unit.name || 'Unit'}
-          </div>
-          <div className="mt-0.5 text-[10px] tracking-widest text-line/70 uppercase">
-            Unit detail panel · next phase
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="border border-line/40 px-3 py-2 text-[10px] tracking-widest text-line uppercase hover:border-amber hover:text-amber"
-        >
-          Close
-        </button>
-      </div>
-    </div>
-  )
-}
-
 // ---------------------------------------------------------------------------
 // immutable state helpers
 // ---------------------------------------------------------------------------
 
-function patchUnit(state, unitId, patch) {
+/** `patch` is a partial unit, or a function (unit) => partial unit. */
+export function patchUnit(state, unitId, patch) {
   return {
     ...state,
     properties: state.properties.map((p) => ({
       ...p,
       floors: p.floors.map((f) => ({
         ...f,
-        units: f.units.map((u) => (u.id === unitId ? { ...u, ...patch } : u)),
+        units: f.units.map((u) => {
+          if (u.id !== unitId) return u
+          const partial = typeof patch === 'function' ? patch(u) : patch
+          return { ...u, ...partial }
+        }),
       })),
     })),
   }

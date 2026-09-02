@@ -25,10 +25,18 @@ export default function UnitBox({ unit, variant = 'main', onChange, onOpen, onFl
   const split = Boolean(unit.splittable && unit.isSplit)
   const label = unit.name || 'Unit'
 
+  // Tapping anywhere on the box opens the detail panel, except on its own
+  // controls (rent input, status dot, split, flip), which keep their jobs.
+  const handleBoxTap = (e) => {
+    if (e.target.closest('button, input, select, textarea, label, a')) return
+    onOpen?.()
+  }
+
   return (
     <div
+      onClick={handleBoxTap}
       className={cx(
-        'relative flex min-w-0 flex-col p-2',
+        'relative flex min-w-0 cursor-pointer flex-col p-2',
         variant === 'main' && 'flex-1 border-r border-line last:border-r-0',
         variant === 'side' && 'shrink-0 border border-line bg-line/5',
         renovating && 'outline-dashed outline-1 -outline-offset-4 outline-amber/70',
