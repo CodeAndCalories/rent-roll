@@ -17,7 +17,7 @@
 //              rent, status,                  // status: 'leased' | 'vacant' | 'renovating'
 //              tenant, leaseStart, leaseEnd,
 //              splittable, isSplit, splitRent, // for the double single
-//              sideOf,                        // 'left' | 'right': which side a 'side' unit hangs off
+//              sideOf,                        // 'left' | 'right': side a 'side' unit hangs off (default 'left')
 //              photoBox,                      // null or { x, y, w, h } as fractions (0-1) of the photo
 //              bills[], tasks[], notes[] }
 //   Bill     { id, label, amount, cadence, dueDay, paid } // cadence: 'monthly'|'yearly'|'once'
@@ -31,9 +31,12 @@
 // `splitRent` is the second half's rent. When not split, `rent` is the whole
 // unit and `splitRent` is ignored (but kept).
 
-// v1: initial. v2: + property.photoSize, property.view, unit.sideOf,
-// unit.photoBox (all additive; filled by normalizeState, no migration step).
-export const SCHEMA_VERSION = 2
+// v1: initial.
+// v2: + property.photoSize, property.view, unit.sideOf (default 'right'),
+//     unit.photoBox. Additive; filled by normalizeState, no migration step.
+// v3: unit.sideOf default becomes 'left'. Additive only: a stored sideOf is
+//     always kept; only units with none get the new default.
+export const SCHEMA_VERSION = 3
 
 export const SHAPES = ['gable', 'flat', 'mansard', 'custom']
 export const POSITIONS = ['left', 'right', 'full', 'side']
@@ -128,7 +131,7 @@ export function makeUnit(fields = {}) {
     splittable: false,
     isSplit: false,
     splitRent: 0,
-    sideOf: 'right',
+    sideOf: 'left',
     photoBox: null,
     bills: [],
     tasks: [],
