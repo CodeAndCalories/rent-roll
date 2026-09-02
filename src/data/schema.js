@@ -1,7 +1,8 @@
 // Rent Roll — data shapes, defaults, normalizers, and seed data.
 //
 // This file knows what the data LOOKS like. It does not touch storage.
-// See store.js for load/save/migrate/import/export.
+// See store.js for load/save/migrate/import/export, ops.js for writes that
+// enforce rules, templates.js for the building templates.
 //
 // Data model (recorded verbatim in CLAUDE.md):
 //
@@ -16,13 +17,17 @@
 //   Unit     { id, name, position,            // position: 'left' | 'right' | 'full' | 'side'
 //              rent, status,                  // status: 'leased' | 'vacant' | 'renovating'
 //              tenant, leaseStart, leaseEnd,
-//              splittable, isSplit, splitRent, // for the double single
+//              splittable, isSplit, splitRent, // any unit can be splittable
 //              sideOf,                        // 'left' | 'right': side a 'side' unit hangs off (default 'left')
 //              photoBox,                      // null or { x, y, w, h } as fractions (0-1) of the photo
 //              bills[], tasks[], notes[] }
 //   Bill     { id, label, amount, cadence, dueDay, paid } // cadence: 'monthly'|'yearly'|'once'
 //   Task     { id, text, done, createdAt }
 //   Note     { id, text, createdAt }
+//
+// Rules enforced on writes (see ops.js):
+//   * position 'side' (a side annex) only on the bottom floor, one per floor
+//   * splittable false forces isSplit false (splitRent is kept, not counted)
 //
 // Money: plain numbers in dollars. Round only at display with Math.round.
 // Empty input means 0, never NaN. See toAmount() / formatDollars().
@@ -36,7 +41,10 @@
 //     unit.photoBox. Additive; filled by normalizeState, no migration step.
 // v3: unit.sideOf default becomes 'left'. Additive only: a stored sideOf is
 //     always kept; only units with none get the new default.
-export const SCHEMA_VERSION = 3
+// v4: no field changes. The seed is now empty (buildings come from
+//     templates.js) and the side-annex / splittable rules are enforced on
+//     writes in ops.js. Existing stores load unchanged.
+export const SCHEMA_VERSION = 4
 
 export const SHAPES = ['gable', 'flat', 'mansard', 'custom']
 export const POSITIONS = ['left', 'right', 'full', 'side']
@@ -192,83 +200,11 @@ export function normalizeState(state) {
 }
 
 // ---------------------------------------------------------------------------
-// seed — the real buildings, rents left at 0
+// seed — an empty sheet. Buildings are created from templates.js.
 // ---------------------------------------------------------------------------
 
-/** Building-level cost lines every property starts with (amounts blank). */
-function buildingBills(prefix) {
-  return [
-    { id: `${prefix}-bill-mortgage`, label: 'Mortgage', amount: 0, cadence: 'monthly', dueDay: 1 },
-    { id: `${prefix}-bill-taxes`, label: 'Property taxes', amount: 0, cadence: 'yearly', dueDay: 1 },
-    { id: `${prefix}-bill-insurance`, label: 'Insurance', amount: 0, cadence: 'yearly', dueDay: 1 },
-    { id: `${prefix}-bill-water`, label: 'Water', amount: 0, cadence: 'monthly', dueDay: 1 },
-  ]
-}
-
 export function seedData() {
-  return makeState({
-    properties: [
-      {
-        id: 'fairview',
-        name: '2107 Fairview',
-        address: '2107 Fairview, Cleveland Heights, OH',
-        shape: 'gable',
-        photo: null,
-        bills: buildingBills('fairview'),
-        floors: [
-          {
-            id: 'fairview-3f',
-            label: '3F',
-            units: [
-              { id: 'fairview-3f-left', name: '3F Front', position: 'left' },
-              { id: 'fairview-3f-right', name: '3F Rear', position: 'right' },
-            ],
-          },
-          {
-            id: 'fairview-2f',
-            label: '2F',
-            units: [
-              { id: 'fairview-2f-left', name: '2F Front', position: 'left' },
-              { id: 'fairview-2f-right', name: '2F Rear', position: 'right' },
-            ],
-          },
-          {
-            id: 'fairview-street',
-            label: 'Street',
-            units: [
-              {
-                id: 'fairview-double-single',
-                name: 'Double single',
-                position: 'full',
-                splittable: true,
-              },
-              { id: 'fairview-storefront', name: 'Storefront', position: 'side' },
-            ],
-          },
-        ],
-      },
-      {
-        id: 'duplex',
-        name: 'Duplex',
-        address: '',
-        shape: 'gable',
-        photo: null,
-        bills: buildingBills('duplex'),
-        floors: [
-          {
-            id: 'duplex-2f',
-            label: '2F',
-            units: [{ id: 'duplex-upper', name: 'Upper', position: 'full' }],
-          },
-          {
-            id: 'duplex-1f',
-            label: '1F',
-            units: [{ id: 'duplex-lower', name: 'Lower', position: 'full' }],
-          },
-        ],
-      },
-    ],
-  })
+  return makeState({ properties: [] })
 }
 
 // ---------------------------------------------------------------------------

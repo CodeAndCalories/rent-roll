@@ -166,10 +166,10 @@ function stashBackup(ls, raw) {
  * Refuses to write when:
  *   * `state` is not a plausible state object (guards against saving
  *     undefined/null over real data), or
- *   * `state` has zero properties while storage currently has some, unless
- *     opts.allowEmpty is true. This is a cheap floor under the
- *     "never drop existing units" rule; intentional deletes of the last
- *     property must opt in.
+ *   * `state` has zero properties while storage currently holds units,
+ *     unless opts.allowEmpty is true. This is a cheap floor under the
+ *     "never drop existing units" rule. Removing the last, unit-less
+ *     building is allowed (an empty sheet is a valid state).
  */
 export function save(state, opts = {}) {
   if (!isPlausibleState(state)) {
@@ -192,12 +192,12 @@ export function save(state, opts = {}) {
     } catch {
       current = null
     }
-    if (current && countProperties(current) > 0) {
+    if (current && countStoredUnits(current) > 0) {
       return {
         ok: false,
         bytes: 0,
         error: new Error(
-          'save() refused: new state has no properties but storage does. ' +
+          'save() refused: new state has no properties but storage still holds units. ' +
             'Pass { allowEmpty: true } if this is intentional.',
         ),
       }
@@ -215,10 +215,17 @@ export function save(state, opts = {}) {
   }
 }
 
-function countProperties(rawText) {
+function countStoredUnits(rawText) {
   try {
     const v = JSON.parse(rawText)
-    return isPlausibleState(v) ? v.properties.length : 0
+    if (!isPlausibleState(v)) return 0
+    let n = 0
+    for (const p of v.properties) {
+      for (const f of (p && Array.isArray(p.floors) && p.floors) || []) {
+        n += (f && Array.isArray(f.units) && f.units.length) || 0
+      }
+    }
+    return n
   } catch {
     return 0
   }
