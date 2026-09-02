@@ -145,6 +145,39 @@ Amounts are plain numbers in dollars. Round only at display with
   `save()` first and refuses the photo with a sized error message if the
   browser quota is hit. The roof chip is hidden in photo view; the drawing
   data is untouched by photo mode.
+- **Toolbar** (under the header): Raise rents, Undo (while a raise is
+  undoable), Print / PDF, Backup. Chips are 40px tall for phones.
+- **Raise all rents** (`RaiseRents.jsx`): `planRaise()` builds a list of
+  {unitId, before, after} for leased units with a rent (both halves of a
+  split unit); `applyChanges(state, changes, 'after' | 'before')` applies or
+  undoes. The undo record lives only in App state (no data field) and undo
+  skips any unit whose rent was hand-edited after the raise.
+- **Rent bars** (`RentBar` in `UnitBox.jsx`): 3px bar along the bottom of
+  every box, `rentPerRental(unit) / totals.maxRent`; amber below 70%.
+  `rentPerRental` is the larger half of a split unit. Hidden until any rent
+  exists. `rentScale` is threaded App → Elevation → Building → boxes.
+- **Title block** shows six cells: collected/mo, collected/yr, if fully
+  leased (+vacancy), expenses/mo (property + unit bills), net/mo, net/yr.
+  `computeTotals` returns every figure as a finite number, including on an
+  empty sheet.
+- **Print / Save as PDF** (`PrintView.jsx`): replaces the app while open.
+  White paper; theme colours are re-pointed by overriding the CSS variables
+  on the wrapper, so `Elevation readOnly` prints the same drawing in dark
+  ink. Read-only boxes render `RentText` / `StatusMark` instead of inputs
+  and buttons. `.print-fit` gets `--print-zoom` = min(1, 720 /
+  `sheetContentWidth`) so the elevation fits a page. The user triggers the
+  browser print dialog themselves; nothing opens automatically.
+- **Backup** (`Backup.jsx`): `exportJSON` downloads `rent-roll-YYYY-MM-DD.json`;
+  import reads the file with `importJSON`, shows the merge report, and only
+  applies on "Apply import". Nothing is removed by an import.
+- **Empty and error states**: `Elevation` shows "Empty sheet" with the add
+  button when there are no properties; a mass with no floors says "No
+  floors · tap Edit"; a floor with no main units says "No units on this
+  floor"; a photo that fails to decode shows a message inside its frame; the
+  print view prints "No units" / "No bills entered" rows. `ErrorBoundary`
+  (mounted in `main.jsx`) replaces a crashed tree with the error, a Reload
+  button, and a "Download backup" button that exports what is in storage.
+  Every money display goes through `formatDollars`, which never yields NaN.
 - Totals (`computeTotals` in `TitleBlock.jsx`): collected counts units whose
   status is `'leased'` only. Vacant and renovating units count toward "if
   fully leased" and the vacancy gap. `'once'` bills are excluded from monthly
