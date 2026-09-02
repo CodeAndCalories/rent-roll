@@ -24,7 +24,7 @@ const PAPER = {
 
 const STATUS_LABEL = { leased: 'Leased', vacant: 'Vacant', renovating: 'Renovating' }
 
-export default function PrintView({ state, onBack }) {
+export default function PrintView({ state, onBack, portfolioName = '' }) {
   const properties = Array.isArray(state.properties) ? state.properties : []
   const totals = computeTotals(properties)
   const today = new Date().toISOString().slice(0, 10)
@@ -59,6 +59,7 @@ export default function PrintView({ state, onBack }) {
         <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b-2 border-line pb-2">
           <h1 className="font-display text-lg tracking-[0.3em] uppercase">Rent Roll</h1>
           <div className="text-[10px] tracking-[0.2em] text-line uppercase">
+            {portfolioName ? portfolioName + ' · ' : ''}
             {names} · as of {today}
           </div>
         </header>

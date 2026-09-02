@@ -1,24 +1,35 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { load, save } from './data/store.js'
-import { formatDollars } from './data/schema.js'
+import { formatDollars, makePortfolio } from './data/schema.js'
 import {
   RuleError,
   addFloor as opsAddFloor,
+  addPortfolio as opsAddPortfolio,
   addProperty as opsAddProperty,
+  describePortfolio,
   addSideAnnex as opsAddSideAnnex,
   addUnit as opsAddUnit,
   patchProperty,
   patchUnit,
   removeFloor as opsRemoveFloor,
+  removePortfolio as opsRemovePortfolio,
   removeProperty as opsRemoveProperty,
   removeUnit as opsRemoveUnit,
   renameFloor as opsRenameFloor,
+  renamePortfolio as opsRenamePortfolio,
   setUnitWidths as opsSetUnitWidths,
   sideAnnexCheck,
 } from './data/ops.js'
 import { buildFromTemplate } from './data/templates.js'
 import { computeTotals } from './data/totals.js'
 import { ALL, displayedProperties, resolveSelection } from './lib/selection.js'
+import {
+  activePortfolio,
+  portfolioSummaries,
+  portfolioState,
+  propertiesOf,
+  resolvePortfolioId,
+} from './lib/portfolios.js'
 import Elevation from './components/Elevation.jsx'
 import TitleBlock from './components/TitleBlock.jsx'
 import UnitPanel from './components/UnitPanel.jsx'
@@ -27,6 +38,8 @@ import BackupSheet, { describeReport } from './components/Backup.jsx'
 import PrintView from './components/PrintView.jsx'
 import TemplatePicker from './components/TemplatePicker.jsx'
 import BuildingPicker from './components/BuildingPicker.jsx'
+import PortfolioBar from './components/PortfolioBar.jsx'
+import SaveState from './components/SaveState.jsx'
 import { Chip } from './components/controls.jsx'
 
 // All components at module scope (see components/UnitBox.jsx for why).
@@ -41,18 +54,41 @@ export default function App() {
   const [printing, setPrinting] = useState(false)
   const [undo, setUndo] = useState(null) // { changes, label } from the last raise
   const [selected, setSelected] = useState(null) // building id | 'all' | null (= default)
+  const [portfolioId, setPortfolioId] = useState(null) // active portfolio, UI state
+  const [savedAt, setSavedAt] = useState(null) // timestamp of the last good write
 
   // Latest state for callbacks that need to read it outside a render
   // (photo upload does a trial save before committing).
   const stateRef = useRef(state)
   stateRef.current = state
 
+  // The first write is the load itself: nothing to announce.
+  const firstWrite = useRef(true)
+  // Set by an explicit, confirmed removal. save() refuses to write an empty
+  // sheet over a store that still holds units unless it is told the emptying
+  // was deliberate; this is how it is told, for one write only.
+  const emptyingOnPurpose = useRef(false)
+
   // Persist the whole state on every change. save() refuses unsafe writes
-  // and reports failures (e.g. quota) instead of throwing.
+  // and reports failures (e.g. quota) instead of throwing. There is no save
+  // button: this is the only way data is written.
   useEffect(() => {
-    const r = save(state)
+    const r = save(state, { allowEmpty: emptyingOnPurpose.current })
+    emptyingOnPurpose.current = false
     setSaveError(r.ok ? null : describeSaveError(r))
+    if (firstWrite.current) {
+      firstWrite.current = false
+      return
+    }
+    setSavedAt(r.ok ? Date.now() : null)
   }, [state])
+
+  // The "Saved" flash clears itself; a failure stays until a write succeeds.
+  useEffect(() => {
+    if (!savedAt) return undefined
+    const t = setTimeout(() => setSavedAt(null), SAVED_FLASH_MS)
+    return () => clearTimeout(t)
+  }, [savedAt])
 
   // Writes go through ops.js, which rejects rule breaks with RuleError.
   // Inside an updater we cannot set other state, so the notice is queued.
@@ -102,26 +138,68 @@ export default function App() {
     [guarded],
   )
 
-  /** Create a building from a template (the picker collects the choice). */
-  const createProperty = useCallback(({ templateId, name }) => {
-    let property
-    try {
-      property = buildFromTemplate(templateId, name)
-    } catch (err) {
-      setNotice({ tone: 'alert', text: err?.message ?? String(err) })
-      return
-    }
-    setState((s) => opsAddProperty(s, property))
-    // keep a single-building view on the building just made
-    setSelected((cur) => (resolveSelection(stateRef.current.properties, cur) === ALL ? cur : property.id))
-    setDialog(null)
-    setNotice({ tone: 'line', text: `Added ${property.name}. Tap a unit to set its rent.` })
+  /** Create a building from a template, in the portfolio being shown. */
+  const createProperty = useCallback(
+    ({ templateId, name }) => {
+      let property
+      try {
+        property = buildFromTemplate(templateId, name)
+      } catch (err) {
+        setNotice({ tone: 'alert', text: err?.message ?? String(err) })
+        return
+      }
+      const into = resolvePortfolioId(stateRef.current, portfolioId)
+      setState((s) => opsAddProperty(s, property, into))
+      // keep a single-building view on the building just made
+      const shown = propertiesOf(stateRef.current, into)
+      setSelected((cur) => (resolveSelection(shown, cur) === ALL ? cur : property.id))
+      setDialog(null)
+      setNotice({ tone: 'line', text: `Added ${property.name}. Tap a unit to set its rent.` })
+    },
+    [portfolioId],
+  )
+
+  /**
+   * Remove a building. `opts.force` comes from the caption's confirm, which
+   * has already named exactly what the building holds; ops.js still decides
+   * whether the write is allowed.
+   */
+  const removeProperty = useCallback(
+    (propertyId, opts = {}) => {
+      if (opts.force) emptyingOnPurpose.current = true
+      guarded((s) => opsRemoveProperty(s, propertyId, opts))
+      setSelected((cur) => (cur === propertyId ? null : cur))
+    },
+    [guarded],
+  )
+
+  /** Portfolios. The active one is UI state, like the building selection. */
+  const addPortfolio = useCallback(() => {
+    const portfolio = makePortfolio({ name: nextPortfolioName(stateRef.current.portfolios) })
+    setState((s) => opsAddPortfolio(s, portfolio))
+    setPortfolioId(portfolio.id)
+    setSelected(null)
+    setNotice({
+      tone: 'line',
+      text: `Added ${portfolio.name}. Tap its name to rename it; buildings you add now go in it.`,
+    })
   }, [])
 
-  const removeProperty = useCallback(
-    (propertyId) => {
-      guarded((s) => opsRemoveProperty(s, propertyId))
-      setSelected((cur) => (cur === propertyId ? null : cur))
+  const renamePortfolio = useCallback(
+    (id, name) => guarded((s) => opsRenamePortfolio(s, id, name)),
+    [guarded],
+  )
+
+  const removePortfolio = useCallback(
+    (id) => {
+      const d = describePortfolio(stateRef.current, id)
+      emptyingOnPurpose.current = true
+      guarded((s) => opsRemovePortfolio(s, id, { force: true }))
+      setPortfolioId(null)
+      setSelected(null)
+      if (d.buildings > 0) {
+        setNotice({ tone: 'alert', text: `Removed ${d.name || 'the portfolio'} · ${d.text}` })
+      }
     },
     [guarded],
   )
@@ -182,18 +260,47 @@ export default function App() {
   const openTemplatePicker = useCallback(() => setDialog('template'), [])
 
   const openUnit = openUnitId ? findUnit(state, openUnitId) : null
-  const totals = computeTotals(state.properties) // always the whole portfolio
-  const selection = resolveSelection(state.properties, selected)
-  const displayed = displayedProperties(state.properties, selection)
+  // Everything on screen is scoped to the active portfolio; a backup is not.
+  const activeId = resolvePortfolioId(state, portfolioId)
+  const portfolio = activePortfolio(state, portfolioId)
+  const portfolioName = portfolio?.name || 'Portfolio'
+  const inPortfolio = propertiesOf(state, activeId)
+  const totals = computeTotals(inPortfolio)
+  const selection = resolveSelection(inPortfolio, selected)
+  const displayed = displayedProperties(inPortfolio, selection)
   const showing = selection === ALL ? null : displayed[0]?.name || 'Building'
 
   if (printing) {
-    return <PrintView state={state} onBack={stopPrinting} />
+    return (
+      <PrintView
+        state={portfolioState(state, activeId)}
+        portfolioName={portfolioName}
+        onBack={stopPrinting}
+      />
+    )
   }
 
   return (
     <div className="bg-blueprint-grid flex min-h-dvh flex-col">
-      <SheetHeader warnings={loaded.warnings} collected={totals.collected} />
+      <SheetHeader
+        warnings={loaded.warnings}
+        collected={totals.collected}
+        portfolioName={portfolioName}
+        savedAt={savedAt}
+        saveError={saveError}
+      />
+      <PortfolioBar
+        portfolios={portfolioSummaries(state)}
+        activeId={activeId}
+        removal={describePortfolio(state, activeId)}
+        onSelect={(id) => {
+          setPortfolioId(id)
+          setSelected(null)
+        }}
+        onAdd={addPortfolio}
+        onRename={renamePortfolio}
+        onRemove={removePortfolio}
+      />
       <Tools
         onRaise={() => setDialog('raise')}
         onUndo={undo ? undoRaise : null}
@@ -201,7 +308,7 @@ export default function App() {
         onPrint={() => setPrinting(true)}
         onBackup={() => setDialog('backup')}
       />
-      <BuildingPicker properties={state.properties} selection={selection} onSelect={setSelected} />
+      <BuildingPicker properties={inPortfolio} selection={selection} onSelect={setSelected} />
       {notice && (
         <Notice notice={notice} onDismiss={() => setNotice(null)} onUndo={notice.undo && undo ? undoRaise : null} />
       )}
@@ -221,7 +328,7 @@ export default function App() {
         />
       </div>
 
-      <TitleBlock totals={totals} saveError={saveError} showing={showing} />
+      <TitleBlock totals={totals} saveError={saveError} showing={showing} portfolioName={portfolioName} />
 
       {openUnit && (
         <UnitPanel
@@ -235,7 +342,7 @@ export default function App() {
 
       {dialog === 'template' && <TemplatePicker onCreate={createProperty} onClose={closeDialog} />}
       {dialog === 'raise' && (
-        <RaiseRentsSheet properties={state.properties} onApply={applyRaise} onClose={closeDialog} />
+        <RaiseRentsSheet properties={inPortfolio} onApply={applyRaise} onClose={closeDialog} />
       )}
       {dialog === 'backup' && (
         <BackupSheet state={state} onImport={applyImport} onNotice={setNotice} onClose={closeDialog} />
@@ -244,15 +351,16 @@ export default function App() {
   )
 }
 
-function SheetHeader({ warnings, collected }) {
+function SheetHeader({ warnings, collected, portfolioName, savedAt, saveError }) {
   return (
     <header className="border-b border-line/40">
-      <div className="flex items-baseline justify-between gap-4 px-4 py-3 sm:px-8">
-        <h1 className="font-display text-base tracking-[0.3em] text-ink uppercase">Rent Roll</h1>
-        {/* live portfolio readout that stays visible above a phone keyboard */}
-        <div className="text-[10px] tracking-[0.2em] text-line/70 uppercase">
-          Portfolio <span className="text-sm tracking-normal text-ink tabular-nums">{formatDollars(collected)}</span>{' '}
-          / mo
+      <div className="flex items-baseline justify-between gap-3 px-4 py-3 sm:px-8">
+        <h1 className="font-display shrink-0 text-base tracking-[0.3em] text-ink uppercase">Rent Roll</h1>
+        <SaveState savedAt={savedAt} error={saveError} />
+        {/* live readout for the portfolio on screen; stays above a phone keyboard */}
+        <div className="ml-auto truncate text-[10px] tracking-[0.2em] text-line/70 uppercase">
+          <span className="hidden sm:inline">{portfolioName} </span>
+          <span className="text-sm tracking-normal text-ink tabular-nums">{formatDollars(collected)}</span> / mo
         </div>
       </div>
       {warnings.length > 0 && (
@@ -327,6 +435,18 @@ function Notice({ notice, onDismiss, onUndo }) {
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
+
+/** How long the "Saved" flash stays up. */
+const SAVED_FLASH_MS = 2000
+
+/** "Portfolio 2", "Portfolio 3", … — renamed in place from the bar. */
+function nextPortfolioName(portfolios) {
+  const n = (portfolios?.length ?? 0) + 1
+  const taken = new Set((portfolios ?? []).map((f) => f.name))
+  let name = `Portfolio ${n}`
+  for (let i = n; taken.has(name); i++) name = `Portfolio ${i + 1}`
+  return name
+}
 
 function findUnit(state, unitId) {
   for (const p of state.properties) {

@@ -13,6 +13,23 @@
   --font-mono: "DM Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --font-display: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
 
+  /* the quiet "Saved" flash next to the header: in, hold, out */
+  --animate-save-flash: save-flash 2s ease-out forwards;
+  @keyframes save-flash {
+    0% {
+      opacity: 0;
+    }
+    10% {
+      opacity: 1;
+    }
+    65% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+
   /* panel entrances: animate-slide-up (bottom sheet), animate-slide-in (drawer) */
   --animate-slide-up: slide-up 0.22s ease-out;
   --animate-slide-in: slide-in 0.22s ease-out;

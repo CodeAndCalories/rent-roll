@@ -2,7 +2,7 @@ import { Fragment, useRef, useState } from 'react'
 import UnitBox from './UnitBox.jsx'
 import PhotoBuilding, { PHOTO_MIN_W } from './PhotoBuilding.jsx'
 import { Chip, InlineLabel, TwoTapChip, cx } from './controls.jsx'
-import { countUnits } from '../data/ops.js'
+import { countUnits, describeContents } from '../data/ops.js'
 import { equalizePair, growOf, isMainUnit, resizePair } from '../lib/widths.js'
 import { PHOTO_MAX_WIDTH, resizeImageFile } from '../lib/image.js'
 
@@ -523,6 +523,8 @@ export function BuildingCaption({
   const photo = hasPhoto(property)
   const photoView = isPhotoView(property)
   const patch = (p) => onPropertyChange(property.id, p)
+  // what removing this building would take with it, named in the confirm
+  const contents = describeContents(property)
 
   const pickFile = async (e) => {
     const file = e.target.files?.[0]
@@ -611,15 +613,26 @@ export function BuildingCaption({
           </Chip>
         )}
 
-        {!photoView && build && countUnits(property) === 0 && (
-          <TwoTapChip
-            onConfirm={() => onRemoveProperty(property.id)}
-            confirmLabel="Remove building?"
-            title="Only an empty building can be removed"
-          >
-            ✕ Building
-          </TwoTapChip>
-        )}
+        {!photoView &&
+          build &&
+          (countUnits(property) === 0 ? (
+            <TwoTapChip
+              onConfirm={() => onRemoveProperty(property.id)}
+              confirmLabel="Remove building?"
+              title="This building has nothing on it"
+            >
+              ✕ Building
+            </TwoTapChip>
+          ) : (
+            <TwoTapChip
+              onConfirm={() => onRemoveProperty(property.id, { force: true })}
+              confirmLabel={`Remove ${contents.short}?`}
+              detail={`${property.name || 'This building'} and everything on it: ${contents.text}`}
+              title="Removes the building and everything on it"
+            >
+              Remove building
+            </TwoTapChip>
+          ))}
       </div>
 
       {!photoView && build && (

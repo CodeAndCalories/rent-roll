@@ -7,11 +7,11 @@ import { billMonthly, computeTotals, rentPerRental, unitMonthly } from '../data/
 export { billMonthly, computeTotals, rentPerRental, unitMonthly }
 
 /**
- * The drafting title block. Totals ALWAYS cover the whole portfolio, whatever
- * the sheet is drawing; `showing` names the one building drawn when the
- * sheet is filtered so the label makes that unambiguous.
+ * The drafting title block. Totals cover the ACTIVE PORTFOLIO, whatever the
+ * sheet is drawing: `portfolioName` names it, and `showing` names the one
+ * building drawn when the sheet is filtered, so neither is ambiguous.
  */
-export default function TitleBlock({ totals: t, saveError, showing = null }) {
+export default function TitleBlock({ totals: t, saveError, showing = null, portfolioName = '' }) {
   const today = new Date().toISOString().slice(0, 10)
 
   return (
@@ -36,13 +36,14 @@ export default function TitleBlock({ totals: t, saveError, showing = null }) {
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-line/40 px-3 py-1.5 text-[9px] tracking-[0.2em] text-line/70 uppercase sm:px-4">
-        <span className="font-display text-ink">Portfolio totals</span>
+        <span className="font-display truncate text-ink">{portfolioName || 'Portfolio'} · totals</span>
         <span>
           {t.properties} {t.properties === 1 ? 'bldg' : 'bldgs'} · {t.units} units · {t.billCount} bills
         </span>
         {showing && (
           <span className="text-amber">
-            Showing {showing} only · totals cover all {t.properties} buildings
+            Showing {showing} only · totals cover {portfolioName || 'this portfolio'} ({t.properties}{' '}
+            {t.properties === 1 ? 'building' : 'buildings'})
           </span>
         )}
         <span>Sheet A-1 · {today}</span>

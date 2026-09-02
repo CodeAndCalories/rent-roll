@@ -29,17 +29,22 @@ export function Chip({ as: Tag = 'button', active = false, tone = 'line', classN
   )
 }
 
-/** Two-tap confirm chip: first tap arms it, second confirms; disarms after 3s. */
-export function TwoTapChip({ onConfirm, confirmLabel = 'Sure?', children, className, ...rest }) {
+/**
+ * Two-tap confirm chip: the first tap arms it, the second confirms.
+ * It disarms itself after a few seconds so an armed chip is never left
+ * lying around. `detail` names what is about to go — shown beside the chip
+ * while it is armed, with longer to read it.
+ */
+export function TwoTapChip({ onConfirm, confirmLabel = 'Sure?', detail, children, className, ...rest }) {
   const [armed, setArmed] = useState(false)
 
   useEffect(() => {
     if (!armed) return undefined
-    const t = setTimeout(() => setArmed(false), 3000)
+    const t = setTimeout(() => setArmed(false), detail ? 6000 : 3000)
     return () => clearTimeout(t)
-  }, [armed])
+  }, [armed, detail])
 
-  return (
+  const chip = (
     <Chip
       tone="alert"
       aria-pressed={armed}
@@ -56,6 +61,18 @@ export function TwoTapChip({ onConfirm, confirmLabel = 'Sure?', children, classN
     >
       {armed ? confirmLabel : children}
     </Chip>
+  )
+
+  if (!detail) return chip
+  return (
+    <>
+      {chip}
+      {armed && (
+        <span role="alert" className="max-w-full text-[9px] leading-snug text-alert normal-case">
+          {detail}
+        </span>
+      )}
+    </>
   )
 }
 
