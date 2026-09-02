@@ -159,7 +159,7 @@ test('a saved v2 store loads at the current version with every value intact', ()
   assert.equal(r.source, 'storage')
   assert.equal(r.from, 2)
   assert.equal(r.state.version, SCHEMA_VERSION)
-  assert.equal(SCHEMA_VERSION, 5)
+  assert.equal(SCHEMA_VERSION, 6)
   assert.equal(r.warnings.length, 0)
 
   const p = r.state.properties[0]
@@ -215,7 +215,7 @@ function v4Store() {
   return s
 }
 
-test('a v4 store migrates to v5 with nothing lost and floors split equally', () => {
+test('a v4 store migrates forward with nothing lost and floors split equally', () => {
   const stored = v4Store()
   localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
 
@@ -277,7 +277,8 @@ test('a v4 store migrates to v5 with nothing lost and floors split equally', () 
   const again = load()
   assert.equal(again.from, SCHEMA_VERSION)
   assert.deepEqual(again.state.properties, r.state.properties)
-  assert.deepEqual(migrate(v4Store()).state, migrate(migrate(v4Store()).state).state, 'idempotent')
+  const once = migrate(v4Store()).state
+  assert.deepEqual(migrate(once).state, once, 'idempotent')
 })
 
 test('sideOf is present on every unit: stored values kept, missing ones default to left', () => {

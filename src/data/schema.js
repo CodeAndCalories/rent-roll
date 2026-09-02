@@ -6,8 +6,9 @@
 //
 // Data model (recorded verbatim in CLAUDE.md):
 //
-//   State    { version, updatedAt, properties[] }
-//   Property { id, name, address, shape, photo, photoSize, view, floors[], bills[] }
+//   State     { version, updatedAt, portfolios[], properties[] }
+//   Portfolio { id, name, propertyIds[] }   // which buildings it holds
+//   Property  { id, name, address, shape, photo, photoSize, view, floors[], bills[] }
 //     shape: 'gable' | 'flat' | 'mansard' | 'custom'
 //     photo: null or a data-URL string (resized to <= 1200px wide before storing)
 //     photoSize: null or { w, h } pixel size of the stored photo
@@ -25,6 +26,13 @@
 //   Bill     { id, label, amount, cadence, dueDay, paid } // cadence: 'monthly'|'yearly'|'once'
 //   Task     { id, text, done, createdAt }
 //   Note     { id, text, createdAt }
+//
+// Portfolios hold their buildings BY ID, so a portfolio can be added,
+// renamed, or removed without a single byte of a building moving. Two
+// invariants are kept by normalizeState, never by a component:
+//   * there is always at least one portfolio
+//   * every building is in exactly one portfolio (an unlisted building is
+//     adopted by the first, so a building can never fall off the sheet)
 //
 // Rules enforced on writes (see ops.js):
 //   * position 'side' (a side annex) only on the bottom floor, one per floor
@@ -49,7 +57,14 @@
 //     proportion to their weights, so all-1s is the equal split every older
 //     store already draws. Additive; filled by normalizeState, no migration
 //     step. A stored weight is always kept.
-export const SCHEMA_VERSION = 5
+// v6: + state.portfolios: [{ id, name, propertyIds }]. Buildings stay exactly
+//     where they are, at the top level; a portfolio only lists ids. A store
+//     with no portfolios gets one named "My properties" holding every
+//     building it already had, so nothing moves and nothing is lost.
+export const SCHEMA_VERSION = 6
+
+/** The portfolio every pre-v6 store's buildings are gathered into. */
+export const DEFAULT_PORTFOLIO_NAME = 'My properties'
 
 export const SHAPES = ['gable', 'flat', 'mansard', 'custom']
 export const POSITIONS = ['left', 'right', 'full', 'side']
@@ -196,14 +211,61 @@ export function makeProperty(fields = {}) {
   }
 }
 
-export function makeState(fields = {}) {
+export function makePortfolio(fields = {}) {
   return {
+    id: newId('portfolio'),
+    name: '',
+    propertyIds: [],
+    ...fields,
+    propertyIds: asIds(fields.propertyIds),
+  }
+}
+
+export function makeState(fields = {}) {
+  return withPortfolios({
     version: SCHEMA_VERSION,
     updatedAt: nowISO(),
     properties: [],
+    portfolios: [],
     ...fields,
     properties: asArray(fields.properties).map(makeProperty),
+    portfolios: asArray(fields.portfolios).map(makePortfolio),
+  })
+}
+
+/**
+ * The two portfolio invariants, applied to a state that already has its
+ * factories run. Purely additive: no building is ever dropped, and a
+ * building listed nowhere is adopted rather than lost.
+ *   * at least one portfolio exists (named DEFAULT_PORTFOLIO_NAME)
+ *   * every building is in exactly one portfolio, first claim winning
+ *   * ids naming no building are dropped from the lists (dead references)
+ */
+export function withPortfolios(state) {
+  const known = new Set(state.properties.map((p) => p.id))
+  const claimed = new Set()
+
+  let portfolios = state.portfolios.map((f) => {
+    const propertyIds = f.propertyIds.filter((id) => {
+      if (!known.has(id) || claimed.has(id)) return false
+      claimed.add(id)
+      return true
+    })
+    return propertyIds.length === f.propertyIds.length ? f : { ...f, propertyIds }
+  })
+
+  if (portfolios.length === 0) {
+    portfolios = [makePortfolio({ name: DEFAULT_PORTFOLIO_NAME })]
   }
+
+  const orphans = state.properties.map((p) => p.id).filter((id) => !claimed.has(id))
+  if (orphans.length > 0) {
+    portfolios = portfolios.map((f, i) =>
+      i === 0 ? { ...f, propertyIds: [...f.propertyIds, ...orphans] } : f,
+    )
+  }
+
+  return { ...state, portfolios }
 }
 
 /**
@@ -216,11 +278,12 @@ export function normalizeState(state) {
 }
 
 // ---------------------------------------------------------------------------
-// seed — an empty sheet. Buildings are created from templates.js.
+// seed — an empty sheet with one empty portfolio. Buildings are created from
+// templates.js.
 // ---------------------------------------------------------------------------
 
 export function seedData() {
-  return makeState({ properties: [] })
+  return makeState({ properties: [], portfolios: [{ name: DEFAULT_PORTFOLIO_NAME }] })
 }
 
 // ---------------------------------------------------------------------------
@@ -233,4 +296,15 @@ export function isObject(v) {
 
 export function asArray(v) {
   return Array.isArray(v) ? v.filter(isObject) : []
+}
+
+/** A list of ids: non-empty strings, in order, without repeats. */
+export function asIds(v) {
+  if (!Array.isArray(v)) return []
+  const seen = new Set()
+  return v.filter((x) => {
+    if (typeof x !== 'string' || x === '' || seen.has(x)) return false
+    seen.add(x)
+    return true
+  })
 }

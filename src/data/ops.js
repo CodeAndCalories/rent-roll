@@ -7,7 +7,12 @@
 //   * A side annex (position 'side') may only be on the bottom floor of its
 //     building, and a floor may have at most one.
 //   * splittable false forces isSplit false. splitRent is kept (not counted).
-//   * A building can be removed only when it has no units.
+//   * A building can be removed only when it has no units, unless the
+//     caller passes { force: true } — what the caption's confirm does once
+//     it has named exactly what would go.
+//   * There is always at least one portfolio, and a portfolio that holds
+//     buildings only goes with { force: true } (which takes its buildings
+//     with it).
 //   * A unit can be removed only when it is empty (isEmptyUnit), a floor
 //     only when it has no units.
 //   * Width weights are positive numbers, and a side annex never carries
@@ -17,7 +22,7 @@
 // for unrelated edits: a property patch is refused only if it ADDS a
 // violation.
 
-import { makeFloor, makeUnit, toAmount, toWeight } from './schema.js'
+import { makeFloor, makeUnit, toAmount, toWeight, withPortfolios } from './schema.js'
 
 export class RuleError extends Error {
   constructor(message, code) {
@@ -182,18 +187,159 @@ export function patchProperty(state, propertyId, patch) {
   return { ...state, properties: state.properties.map((p) => (p.id === propertyId ? next : p)) }
 }
 
-export function addProperty(state, property) {
-  return { ...state, properties: [...state.properties, property] }
+/** Add a building, into `portfolioId` or else the first portfolio. */
+export function addProperty(state, property, portfolioId) {
+  const list = state.portfolios ?? []
+  const target = list.find((f) => f.id === portfolioId) ?? list[0]
+  return withPortfolios({
+    ...state,
+    properties: [...state.properties, property],
+    portfolios: list.map((f) =>
+      target && f.id === target.id ? { ...f, propertyIds: [...f.propertyIds, property.id] } : f,
+    ),
+  })
 }
 
-/** Remove a building. Rejected with RuleError while it still has units. */
-export function removeProperty(state, propertyId) {
+/**
+ * Remove a building, and its id from the portfolio holding it.
+ *
+ * Refused with RuleError while it still has units, unless { force: true }:
+ * the caption arms that only after naming what the building holds
+ * (describeContents), so an explicit removal is possible but never a slip.
+ */
+export function removeProperty(state, propertyId, opts = {}) {
   const p = state.properties.find((x) => x.id === propertyId)
   if (!p) return state
-  if (countUnits(p) > 0) {
-    throw new RuleError(`${p.name || 'That building'} still has units. Remove them first.`, 'has-units')
+  if (countUnits(p) > 0 && !opts.force) {
+    throw new RuleError(
+      `${p.name || 'That building'} still has units. Confirm the removal, or empty it first.`,
+      'has-units',
+    )
   }
-  return { ...state, properties: state.properties.filter((x) => x.id !== propertyId) }
+  // withPortfolios drops ids that name no building, so the lists follow
+  return withPortfolios({ ...state, properties: state.properties.filter((x) => x.id !== propertyId) })
+}
+
+/**
+ * What a building holds, for a confirm that names exactly what would be
+ * lost. Building bills at 0 are not counted: every template starts with
+ * four of them and they are not data the user typed.
+ */
+export function describeContents(property) {
+  const units = (property?.floors ?? []).flatMap((f) => f.units ?? [])
+  const counts = {
+    units: units.length,
+    withRent: units.filter((u) => toAmount(u.rent) + toAmount(u.splitRent) > 0).length,
+    tenants: units.filter((u) => u.tenant && String(u.tenant).trim()).length,
+    bills:
+      units.reduce((n, u) => n + (u.bills?.length ?? 0), 0) +
+      (property?.bills ?? []).filter((b) => toAmount(b.amount) > 0).length,
+    tasks: units.reduce((n, u) => n + (u.tasks?.length ?? 0), 0),
+    notes: units.reduce((n, u) => n + (u.notes?.length ?? 0), 0),
+  }
+
+  const held = [
+    counts.withRent && `${counts.withRent} with rent`,
+    counts.tenants && `${counts.tenants} ${counts.tenants === 1 ? 'tenant' : 'tenants'}`,
+    counts.bills && `${counts.bills} ${counts.bills === 1 ? 'bill' : 'bills'}`,
+    counts.tasks && `${counts.tasks} list ${counts.tasks === 1 ? 'item' : 'items'}`,
+    counts.notes && `${counts.notes} ${counts.notes === 1 ? 'note' : 'notes'}`,
+  ].filter(Boolean)
+
+  const short = `${counts.units} ${counts.units === 1 ? 'unit' : 'units'}`
+  return {
+    ...counts,
+    empty: counts.units === 0,
+    holdsData: held.length > 0,
+    short,
+    text:
+      counts.units === 0
+        ? 'No units on it.'
+        : held.length === 0
+          ? `${short}, none with rent, tenants, bills, list items or notes.`
+          : `${short} · ${held.join(' · ')}.`,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// portfolios
+// ---------------------------------------------------------------------------
+
+/** The portfolio a building belongs to (there is always exactly one). */
+export function portfolioOf(state, propertyId) {
+  return (state.portfolios ?? []).find((f) => f.propertyIds.includes(propertyId)) ?? null
+}
+
+/** Add a portfolio. The caller makes it (makePortfolio) so it knows the id. */
+export function addPortfolio(state, portfolio) {
+  return withPortfolios({ ...state, portfolios: [...(state.portfolios ?? []), portfolio] })
+}
+
+export function renamePortfolio(state, portfolioId, name) {
+  return withPortfolios({
+    ...state,
+    portfolios: (state.portfolios ?? []).map((f) =>
+      f.id === portfolioId ? { ...f, name: String(name ?? '') } : f,
+    ),
+  })
+}
+
+/**
+ * What a portfolio holds, for its removal confirm: its buildings and their
+ * contents rolled up.
+ */
+export function describePortfolio(state, portfolioId) {
+  const f = (state.portfolios ?? []).find((x) => x.id === portfolioId)
+  const properties = (f?.propertyIds ?? [])
+    .map((id) => state.properties.find((p) => p.id === id))
+    .filter(Boolean)
+  const parts = properties.map(describeContents)
+  const units = parts.reduce((n, d) => n + d.units, 0)
+  const withRent = parts.reduce((n, d) => n + d.withRent, 0)
+  const buildings = properties.length
+
+  const bits = [
+    `${buildings} ${buildings === 1 ? 'building' : 'buildings'}`,
+    units && `${units} ${units === 1 ? 'unit' : 'units'}`,
+    withRent && `${withRent} with rent`,
+  ].filter(Boolean)
+
+  return {
+    name: f?.name ?? '',
+    buildings,
+    units,
+    withRent,
+    empty: buildings === 0,
+    short: `${buildings} ${buildings === 1 ? 'building' : 'buildings'}`,
+    text: buildings === 0 ? 'It holds no buildings.' : `Takes ${bits.join(' · ')} with it.`,
+  }
+}
+
+/**
+ * Remove a portfolio. The last one can never go — an empty sheet still has
+ * a portfolio to draw on. One that holds buildings needs { force: true },
+ * and takes those buildings with it.
+ */
+export function removePortfolio(state, portfolioId, opts = {}) {
+  const list = state.portfolios ?? []
+  const f = list.find((x) => x.id === portfolioId)
+  if (!f) return state
+  if (list.length <= 1) {
+    throw new RuleError('There is always at least one portfolio.', 'last-portfolio')
+  }
+  if (f.propertyIds.length > 0 && !opts.force) {
+    const d = describePortfolio(state, portfolioId)
+    throw new RuleError(
+      `${f.name || 'That portfolio'} holds ${d.short}. Confirm the removal to take them with it.`,
+      'has-buildings',
+    )
+  }
+  const going = new Set(f.propertyIds)
+  return withPortfolios({
+    ...state,
+    properties: state.properties.filter((p) => !going.has(p.id)),
+    portfolios: list.filter((x) => x.id !== portfolioId),
+  })
 }
 
 // ---------------------------------------------------------------------------

@@ -19,7 +19,9 @@ import {
   seedData,
   isObject,
   asArray,
+  asIds,
   nowISO,
+  withPortfolios,
 } from './schema.js'
 
 export const STORAGE_KEY = 'rentroll:v1'
@@ -284,8 +286,8 @@ function defaultExportFilename(d = new Date()) {
  * where report counts added/updated/unchanged per entity type.
  *
  * Merge rules:
- *   * Entities are matched by id at every level (property, floor, unit,
- *     bill, task, note).
+ *   * Entities are matched by id at every level (portfolio, property,
+ *     floor, unit, bill, task, note).
  *   * Matched: the incoming scalar fields win; nested lists are merged
  *     recursively. Fields the incoming item lacks are kept from the
  *     existing one.
@@ -315,12 +317,22 @@ export async function importJSON(input, currentState) {
     report.properties,
   )
 
-  const state = {
+  const portfolios = mergeById(
+    base.state.portfolios,
+    incoming.state.portfolios,
+    mergePortfolio,
+    report.portfolios,
+  )
+
+  // withPortfolios keeps the invariants: an imported building that no
+  // portfolio in the file claimed is adopted rather than left off the sheet.
+  const state = withPortfolios({
     ...base.state,
     ...incoming.state,
     properties,
+    portfolios,
     version: SCHEMA_VERSION,
-  }
+  })
 
   return {
     state,
@@ -355,6 +367,7 @@ function coerceToStateShape(v) {
 function newReport() {
   const tally = () => ({ added: 0, updated: 0, unchanged: 0 })
   return {
+    portfolios: tally(),
     properties: tally(),
     floors: tally(),
     units: tally(),
@@ -382,6 +395,16 @@ function mergeById(existing, incoming, mergeItem, tally) {
 }
 
 const mergeLeaf = (ex, inc) => ({ ...ex, ...inc })
+
+/**
+ * A matched portfolio takes the file's name and the union of both lists of
+ * buildings — a building this sheet already had in it is never dropped
+ * because the file did not mention it.
+ */
+function mergePortfolio(ex, inc) {
+  const propertyIds = asIds([...(ex.propertyIds ?? []), ...(inc.propertyIds ?? [])])
+  return { ...ex, ...inc, propertyIds }
+}
 
 function mergeUnit(ex, inc, report) {
   return {

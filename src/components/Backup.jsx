@@ -10,6 +10,7 @@ import { Chip, Sheet } from './controls.jsx'
 // before anything is applied.
 
 const ENTITY_LABELS = [
+  ['portfolios', 'portfolios'],
   ['properties', 'buildings'],
   ['floors', 'floors'],
   ['units', 'units'],
@@ -102,8 +103,8 @@ export default function BackupSheet({ state, onImport, onNotice, onClose }) {
             Download JSON
           </Chip>
           <p className="text-[10px] text-line/60">
-            Saves <span className="text-ink">rent-roll-{today()}.json</span> with everything on the sheet,
-            photos included. Keep it somewhere safe; localStorage is per browser.
+            Saves <span className="text-ink">rent-roll-{today()}.json</span> with every portfolio, not
+            just the one on screen — photos included. Keep it somewhere safe; localStorage is per browser.
           </p>
         </section>
 
