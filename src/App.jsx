@@ -1,12 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { load, save } from './data/store.js'
-import { formatDollars, makeFloor, makeProperty, makeUnit } from './data/schema.js'
+import { formatDollars } from './data/schema.js'
+import {
+  RuleError,
+  addProperty as opsAddProperty,
+  patchProperty,
+  patchUnit,
+  removeProperty as opsRemoveProperty,
+  sideAnnexCheck,
+} from './data/ops.js'
+import { buildFromTemplate } from './data/templates.js'
+import { computeTotals } from './data/totals.js'
+import { ALL, displayedProperties, resolveSelection } from './lib/selection.js'
 import Elevation from './components/Elevation.jsx'
-import TitleBlock, { computeTotals } from './components/TitleBlock.jsx'
+import TitleBlock from './components/TitleBlock.jsx'
 import UnitPanel from './components/UnitPanel.jsx'
 import RaiseRentsSheet, { applyChanges, describeRaise } from './components/RaiseRents.jsx'
 import BackupSheet, { describeReport } from './components/Backup.jsx'
 import PrintView from './components/PrintView.jsx'
+import TemplatePicker from './components/TemplatePicker.jsx'
+import BuildingPicker from './components/BuildingPicker.jsx'
 import { Chip } from './components/controls.jsx'
 
 // All components at module scope (see components/UnitBox.jsx for why).
@@ -17,9 +30,10 @@ export default function App() {
   const [saveError, setSaveError] = useState(null)
   const [openUnitId, setOpenUnitId] = useState(null)
   const [notice, setNotice] = useState(null)
-  const [dialog, setDialog] = useState(null) // 'raise' | 'backup' | null
+  const [dialog, setDialog] = useState(null) // 'raise' | 'backup' | 'template' | null
   const [printing, setPrinting] = useState(false)
   const [undo, setUndo] = useState(null) // { changes, label } from the last raise
+  const [selected, setSelected] = useState(null) // building id | 'all' | null (= default)
 
   // Latest state for callbacks that need to read it outside a render
   // (photo upload does a trial save before committing).
@@ -33,32 +47,52 @@ export default function App() {
     setSaveError(r.ok ? null : describeSaveError(r))
   }, [state])
 
-  const updateUnit = useCallback((unitId, patch) => {
-    setState((s) => patchUnit(s, unitId, patch))
+  // Writes go through ops.js, which rejects rule breaks with RuleError.
+  // Inside an updater we cannot set other state, so the notice is queued.
+  const guarded = useCallback((fn) => {
+    setState((s) => {
+      try {
+        return fn(s)
+      } catch (err) {
+        if (err instanceof RuleError) {
+          queueMicrotask(() => setNotice({ tone: 'alert', text: err.message }))
+          return s
+        }
+        throw err
+      }
+    })
   }, [])
 
-  const updateProperty = useCallback((propertyId, patch) => {
-    setState((s) => patchProperty(s, propertyId, patch))
-  }, [])
+  const updateUnit = useCallback((unitId, patch) => guarded((s) => patchUnit(s, unitId, patch)), [guarded])
 
-  const addProperty = useCallback(() => {
-    setState((s) => ({ ...s, properties: [...s.properties, newProperty()] }))
-  }, [])
+  const updateProperty = useCallback(
+    (propertyId, patch) => guarded((s) => patchProperty(s, propertyId, patch)),
+    [guarded],
+  )
 
-  const removeProperty = useCallback((propertyId) => {
-    const s = stateRef.current
-    const p = s.properties.find((x) => x.id === propertyId)
-    if (!p) return
-    if (countUnits(p) > 0) {
-      setNotice({ tone: 'alert', text: `${p.name || 'That building'} still has units. Remove them first.` })
+  /** Create a building from a template (the picker collects the choice). */
+  const createProperty = useCallback(({ templateId, name }) => {
+    let property
+    try {
+      property = buildFromTemplate(templateId, name)
+    } catch (err) {
+      setNotice({ tone: 'alert', text: err?.message ?? String(err) })
       return
     }
-    if (s.properties.length <= 1) {
-      setNotice({ tone: 'alert', text: 'Keep at least one building on the sheet.' })
-      return
-    }
-    setState((cur) => ({ ...cur, properties: cur.properties.filter((x) => x.id !== propertyId) }))
+    setState((s) => opsAddProperty(s, property))
+    // keep a single-building view on the building just made
+    setSelected((cur) => (resolveSelection(stateRef.current.properties, cur) === ALL ? cur : property.id))
+    setDialog(null)
+    setNotice({ tone: 'line', text: `Added ${property.name}. Tap a unit to set its rent.` })
   }, [])
+
+  const removeProperty = useCallback(
+    (propertyId) => {
+      guarded((s) => opsRemoveProperty(s, propertyId))
+      setSelected((cur) => (cur === propertyId ? null : cur))
+    },
+    [guarded],
+  )
 
   /**
    * Store a resized photo. A trial save runs first so a quota failure is
@@ -113,9 +147,13 @@ export default function App() {
   const closePanel = useCallback(() => setOpenUnitId(null), [])
   const closeDialog = useCallback(() => setDialog(null), [])
   const stopPrinting = useCallback(() => setPrinting(false), [])
+  const openTemplatePicker = useCallback(() => setDialog('template'), [])
 
   const openUnit = openUnitId ? findUnit(state, openUnitId) : null
-  const totals = computeTotals(state.properties)
+  const totals = computeTotals(state.properties) // always the whole portfolio
+  const selection = resolveSelection(state.properties, selected)
+  const displayed = displayedProperties(state.properties, selection)
+  const showing = selection === ALL ? null : displayed[0]?.name || 'Building'
 
   if (printing) {
     return <PrintView state={state} onBack={stopPrinting} />
@@ -131,17 +169,18 @@ export default function App() {
         onPrint={() => setPrinting(true)}
         onBackup={() => setDialog('backup')}
       />
+      <BuildingPicker properties={state.properties} selection={selection} onSelect={setSelected} />
       {notice && (
         <Notice notice={notice} onDismiss={() => setNotice(null)} onUndo={notice.undo && undo ? undoRaise : null} />
       )}
 
       <div className="flex-1 overflow-x-auto overflow-y-hidden pb-8">
         <Elevation
-          properties={state.properties}
+          properties={displayed}
           onUnitChange={updateUnit}
           onPropertyChange={updateProperty}
           onOpenUnit={setOpenUnitId}
-          onAddProperty={addProperty}
+          onAddProperty={openTemplatePicker}
           onRemoveProperty={removeProperty}
           onSetPhoto={setPhoto}
           onNotice={setNotice}
@@ -149,17 +188,19 @@ export default function App() {
         />
       </div>
 
-      <TitleBlock totals={totals} saveError={saveError} />
+      <TitleBlock totals={totals} saveError={saveError} showing={showing} />
 
       {openUnit && (
         <UnitPanel
           key={openUnit.id}
           unit={openUnit}
+          context={{ sideAnnex: sideAnnexCheck(state, openUnit.id) }}
           onChange={(patch) => updateUnit(openUnit.id, patch)}
           onClose={closePanel}
         />
       )}
 
+      {dialog === 'template' && <TemplatePicker onCreate={createProperty} onClose={closeDialog} />}
       {dialog === 'raise' && (
         <RaiseRentsSheet properties={state.properties} onApply={applyRaise} onClose={closeDialog} />
       )}
@@ -175,9 +216,10 @@ function SheetHeader({ warnings, collected }) {
     <header className="border-b border-line/40">
       <div className="flex items-baseline justify-between gap-4 px-4 py-3 sm:px-8">
         <h1 className="font-display text-base tracking-[0.3em] text-ink uppercase">Rent Roll</h1>
-        {/* live readout that stays visible above a phone keyboard */}
+        {/* live portfolio readout that stays visible above a phone keyboard */}
         <div className="text-[10px] tracking-[0.2em] text-line/70 uppercase">
-          <span className="text-sm tracking-normal text-ink tabular-nums">{formatDollars(collected)}</span> / mo
+          Portfolio <span className="text-sm tracking-normal text-ink tabular-nums">{formatDollars(collected)}</span>{' '}
+          / mo
         </div>
       </div>
       {warnings.length > 0 && (
@@ -250,38 +292,8 @@ function Notice({ notice, onDismiss, onUndo }) {
 }
 
 // ---------------------------------------------------------------------------
-// immutable state helpers
+// helpers
 // ---------------------------------------------------------------------------
-
-/** `patch` is a partial unit, or a function (unit) => partial unit. */
-export function patchUnit(state, unitId, patch) {
-  return {
-    ...state,
-    properties: state.properties.map((p) => ({
-      ...p,
-      floors: p.floors.map((f) => ({
-        ...f,
-        units: f.units.map((u) => {
-          if (u.id !== unitId) return u
-          const partial = typeof patch === 'function' ? patch(u) : patch
-          return { ...u, ...partial }
-        }),
-      })),
-    })),
-  }
-}
-
-/** `patch` is a partial property, or a function (property) => partial. */
-export function patchProperty(state, propertyId, patch) {
-  return {
-    ...state,
-    properties: state.properties.map((p) => {
-      if (p.id !== propertyId) return p
-      const partial = typeof patch === 'function' ? patch(p) : patch
-      return { ...p, ...partial }
-    }),
-  }
-}
 
 function findUnit(state, unitId) {
   for (const p of state.properties) {
@@ -292,26 +304,6 @@ function findUnit(state, unitId) {
   }
   return null
 }
-
-function countUnits(property) {
-  return property.floors.reduce((n, f) => n + f.units.length, 0)
-}
-
-/** A blank two-storey building to model from. */
-export function newProperty() {
-  return makeProperty({
-    name: 'New building',
-    shape: 'gable',
-    floors: [
-      makeFloor({ label: '2F', units: [makeUnit({ name: '2F', position: 'full' })] }),
-      makeFloor({ label: '1F', units: [makeUnit({ name: '1F', position: 'full' })] }),
-    ],
-  })
-}
-
-// ---------------------------------------------------------------------------
-// save failure messages
-// ---------------------------------------------------------------------------
 
 function isQuotaError(err) {
   if (!err) return false

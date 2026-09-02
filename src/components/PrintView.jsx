@@ -195,7 +195,9 @@ export default function PrintView({ state, onBack }) {
         </Section>
 
         <footer className="mt-6 flex flex-wrap justify-between gap-2 border-t border-line/30 pt-2 text-[9px] tracking-[0.2em] text-line uppercase">
-          <span>Rent Roll · Cleveland Heights</span>
+          <span>
+            Rent Roll · {properties.length} {properties.length === 1 ? 'building' : 'buildings'}
+          </span>
           <span>Figures as entered by the owner · {today}</span>
         </footer>
       </main>
