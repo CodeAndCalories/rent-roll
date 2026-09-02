@@ -1,4 +1,5 @@
 import Building, { BuildingCaption, figureWidthFor } from './Building.jsx'
+import { Chip } from './controls.jsx'
 
 // All components at module scope (see UnitBox.jsx for why).
 
@@ -18,12 +19,13 @@ export function sheetContentWidth(properties, { readOnly = false } = {}) {
 }
 
 /**
- * The drawing sheet: every property side by side on one grade line, with a
- * caption strip under the ground for names and controls. Sized to its
+ * The drawing sheet: the given properties side by side on one grade line,
+ * with a caption strip under the ground for names and controls. Sized to its
  * content and at least the viewport width; the parent scrolls it
  * horizontally on narrow screens.
  *
  * readOnly (print view): no captions, no add button, no inputs.
+ * With no properties at all the sheet shows the first-run empty state.
  */
 export default function Elevation({
   properties,
@@ -39,12 +41,16 @@ export default function Elevation({
 }) {
   const list = Array.isArray(properties) ? properties : []
 
+  if (list.length === 0 && !readOnly) {
+    return <EmptyState onAddProperty={onAddProperty} />
+  }
+
   return (
     <div className="relative w-max min-w-full">
       {/* figures, feet on the grade line; side margins leave room for floor markers */}
       <div className="mx-auto w-max pt-12" style={{ paddingLeft: SHEET_PAD_X, paddingRight: SHEET_PAD_X }}>
         <div className="flex items-end" style={{ gap: BUILDING_GAP }}>
-          {list.length === 0 && <EmptySheet readOnly={readOnly} />}
+          {list.length === 0 && <NoBuildings />}
           {list.map((p) => (
             <Building
               key={p.id}
@@ -65,7 +71,6 @@ export default function Elevation({
       {!readOnly && (
         <div className="mx-auto w-max pb-6" style={{ paddingLeft: SHEET_PAD_X, paddingRight: SHEET_PAD_X }}>
           <div className="flex items-start" style={{ gap: BUILDING_GAP }}>
-            {list.length === 0 && <div style={{ width: ADD_W }} aria-hidden />}
             {list.map((p) => (
               <BuildingCaption
                 key={p.id}
@@ -99,7 +104,7 @@ function GradeLine() {
   )
 }
 
-/** Dashed ghost footprint at the end of the row for modelling a new building. */
+/** Dashed ghost footprint at the end of the row for adding a building. */
 function AddBuilding({ onClick }) {
   return (
     <button
@@ -107,21 +112,41 @@ function AddBuilding({ onClick }) {
       onClick={onClick}
       className="flex h-28 shrink-0 items-center justify-center border border-dashed border-line/40 text-[10px] tracking-[0.2em] text-line/60 uppercase hover:border-amber hover:text-amber"
       style={{ width: ADD_W }}
-      title="Add a building to model"
+      title="Add a building"
     >
       + Building
     </button>
   )
 }
 
-/** Shown on the grade line when there are no properties at all. */
-function EmptySheet({ readOnly }) {
+/** First run: nothing on the sheet yet. Fits a phone without scrolling. */
+function EmptyState({ onAddProperty }) {
+  return (
+    <div className="min-w-full">
+      <div className="mx-auto max-w-sm px-6 pt-16 pb-10 text-center">
+        <p className="font-display text-sm tracking-[0.25em] text-ink uppercase">Nothing on the sheet yet</p>
+        <p className="mt-3 text-xs leading-relaxed text-line/70">
+          Rent Roll draws each building as a blueprint elevation with a rent box on every unit, and keeps
+          the totals live as you type. Everything stays in this browser.
+        </p>
+        <Chip active onClick={onAddProperty} className="mt-5 min-h-10 px-4">
+          + Add building
+        </Chip>
+      </div>
+      <GradeLine />
+      <div className="h-6" />
+    </div>
+  )
+}
+
+/** Print view with an empty portfolio. */
+function NoBuildings() {
   return (
     <div
       className="flex h-28 items-center justify-center border border-dashed border-line/30 px-4 text-center text-[10px] tracking-[0.2em] text-line/60 uppercase"
       style={{ width: ADD_W }}
     >
-      {readOnly ? 'No buildings' : 'Empty sheet'}
+      No buildings
     </div>
   )
 }
