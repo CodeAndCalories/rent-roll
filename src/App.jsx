@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { load, save } from './data/store.js'
-import { formatDollars } from './data/schema.js'
+import { formatDollars, makeFloor, makeProperty, makeUnit } from './data/schema.js'
 import Elevation from './components/Elevation.jsx'
 import TitleBlock, { computeTotals } from './components/TitleBlock.jsx'
 import UnitPanel from './components/UnitPanel.jsx'
@@ -12,12 +12,18 @@ export default function App() {
   const [state, setState] = useState(loaded.state)
   const [saveError, setSaveError] = useState(null)
   const [openUnitId, setOpenUnitId] = useState(null)
+  const [notice, setNotice] = useState(null)
+
+  // Latest state for callbacks that need to read it outside a render
+  // (photo upload does a trial save before committing).
+  const stateRef = useRef(state)
+  stateRef.current = state
 
   // Persist the whole state on every change. save() refuses unsafe writes
   // and reports failures (e.g. quota) instead of throwing.
   useEffect(() => {
     const r = save(state)
-    setSaveError(r.ok ? null : (r.error?.message ?? 'unknown error'))
+    setSaveError(r.ok ? null : describeSaveError(r))
   }, [state])
 
   const updateUnit = useCallback((unitId, patch) => {
@@ -25,10 +31,44 @@ export default function App() {
   }, [])
 
   const updateProperty = useCallback((propertyId, patch) => {
-    setState((s) => ({
-      ...s,
-      properties: s.properties.map((p) => (p.id === propertyId ? { ...p, ...patch } : p)),
-    }))
+    setState((s) => patchProperty(s, propertyId, patch))
+  }, [])
+
+  const addProperty = useCallback(() => {
+    setState((s) => ({ ...s, properties: [...s.properties, newProperty()] }))
+  }, [])
+
+  const removeProperty = useCallback((propertyId) => {
+    const s = stateRef.current
+    const p = s.properties.find((x) => x.id === propertyId)
+    if (!p) return
+    if (countUnits(p) > 0) {
+      setNotice({ tone: 'alert', text: `${p.name || 'That building'} still has units. Remove them first.` })
+      return
+    }
+    if (s.properties.length <= 1) {
+      setNotice({ tone: 'alert', text: 'Keep at least one building on the sheet.' })
+      return
+    }
+    setState((cur) => ({ ...cur, properties: cur.properties.filter((x) => x.id !== propertyId) }))
+  }, [])
+
+  /**
+   * Store a resized photo. A trial save runs first so a quota failure is
+   * reported immediately and the app never holds a photo it cannot persist.
+   */
+  const setPhoto = useCallback((propertyId, { dataUrl, w, h, bytes }) => {
+    const patch = { photo: dataUrl, photoSize: { w, h }, view: 'photo' }
+    const trial = save(patchProperty(stateRef.current, propertyId, patch))
+    if (!trial.ok) {
+      setNotice({ tone: 'alert', text: describePhotoFailure(trial, bytes) })
+      return
+    }
+    setState((s) => patchProperty(s, propertyId, patch))
+    setNotice({
+      tone: 'line',
+      text: `Photo saved at ${w}×${h}, ${kb(bytes)} KB. Whole data set is now ${kb(trial.bytes)} KB.`,
+    })
   }, [])
 
   const closePanel = useCallback(() => setOpenUnitId(null), [])
@@ -39,6 +79,7 @@ export default function App() {
   return (
     <div className="bg-blueprint-grid flex min-h-dvh flex-col">
       <SheetHeader warnings={loaded.warnings} collected={totals.collected} />
+      {notice && <Notice notice={notice} onDismiss={() => setNotice(null)} />}
 
       <div className="flex-1 overflow-x-auto overflow-y-hidden pb-8">
         <Elevation
@@ -46,6 +87,10 @@ export default function App() {
           onUnitChange={updateUnit}
           onPropertyChange={updateProperty}
           onOpenUnit={setOpenUnitId}
+          onAddProperty={addProperty}
+          onRemoveProperty={removeProperty}
+          onSetPhoto={setPhoto}
+          onNotice={setNotice}
         />
       </div>
 
@@ -84,6 +129,31 @@ function SheetHeader({ warnings, collected }) {
   )
 }
 
+const NOTICE_TONE = {
+  alert: 'border-alert/40 bg-alert/10 text-alert',
+  amber: 'border-amber/40 bg-amber/10 text-amber',
+  line: 'border-line/40 bg-line/10 text-ink',
+}
+
+function Notice({ notice, onDismiss }) {
+  return (
+    <div
+      role="status"
+      className={`flex items-start justify-between gap-3 border-b px-4 py-2 text-xs sm:px-8 ${NOTICE_TONE[notice.tone] ?? NOTICE_TONE.line}`}
+    >
+      <span>{notice.text}</span>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Dismiss"
+        className="-my-1 -mr-2 flex h-7 w-7 shrink-0 items-center justify-center opacity-70 hover:opacity-100"
+      >
+        ✕
+      </button>
+    </div>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // immutable state helpers
 // ---------------------------------------------------------------------------
@@ -106,6 +176,18 @@ export function patchUnit(state, unitId, patch) {
   }
 }
 
+/** `patch` is a partial property, or a function (property) => partial. */
+export function patchProperty(state, propertyId, patch) {
+  return {
+    ...state,
+    properties: state.properties.map((p) => {
+      if (p.id !== propertyId) return p
+      const partial = typeof patch === 'function' ? patch(p) : patch
+      return { ...p, ...partial }
+    }),
+  }
+}
+
 function findUnit(state, unitId) {
   for (const p of state.properties) {
     for (const f of p.floors) {
@@ -114,4 +196,57 @@ function findUnit(state, unitId) {
     }
   }
   return null
+}
+
+function countUnits(property) {
+  return property.floors.reduce((n, f) => n + f.units.length, 0)
+}
+
+/** A blank two-storey building to model from. */
+export function newProperty() {
+  return makeProperty({
+    name: 'New building',
+    shape: 'gable',
+    floors: [
+      makeFloor({ label: '2F', units: [makeUnit({ name: '2F', position: 'full' })] }),
+      makeFloor({ label: '1F', units: [makeUnit({ name: '1F', position: 'full' })] }),
+    ],
+  })
+}
+
+// ---------------------------------------------------------------------------
+// save failure messages
+// ---------------------------------------------------------------------------
+
+function isQuotaError(err) {
+  if (!err) return false
+  return (
+    err.name === 'QuotaExceededError' ||
+    err.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+    err.code === 22 ||
+    err.code === 1014 ||
+    /quota/i.test(err.message ?? '')
+  )
+}
+
+function describeSaveError(result) {
+  if (isQuotaError(result.error)) {
+    return `localStorage is full (data set is ${kb(result.bytes)} KB). Remove or shrink a photo.`
+  }
+  return result.error?.message ?? 'unknown error'
+}
+
+function describePhotoFailure(result, photoBytes) {
+  if (isQuotaError(result.error)) {
+    return (
+      `Photo not saved: the browser's localStorage is full. This photo is ${kb(photoBytes)} KB ` +
+      `and the whole data set would be ${kb(result.bytes)} KB; the limit is usually about 5,000 KB. ` +
+      'Crop the screenshot tighter or remove another building’s photo.'
+    )
+  }
+  return `Photo not saved: ${result.error?.message ?? 'unknown error'}.`
+}
+
+function kb(bytes) {
+  return Math.round((bytes || 0) / 1024).toLocaleString('en-US')
 }
