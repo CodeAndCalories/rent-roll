@@ -38,8 +38,9 @@ Lives in `src/data/schema.js` (shapes, defaults, factories, empty seed),
 (building templates as data), and `src/data/totals.js` (totals math).
 
 ```
-State    { version, updatedAt, properties[] }          // version: 5
-Property { id, name, address, shape, photo, photoSize, view, floors[], bills[] }
+State     { version, updatedAt, portfolios[], properties[] }   // version: 6
+Portfolio { id, name, propertyIds[] }   // the buildings it holds, by id
+Property  { id, name, address, shape, photo, photoSize, view, floors[], bills[] }
   shape: 'gable' | 'flat' | 'mansard' | 'custom'
   photo: null or a data-URL string (JPEG, resized to <= 1200px wide; the
          original file is never stored)
@@ -65,15 +66,39 @@ Note  { id, text, createdAt }
 Schema history: v1 initial; v2 added `photoSize`, `view`, `sideOf` (default
 `'right'`), `photoBox`; v3 changed the `sideOf` default to `'left'`; v4 has no
 field changes (empty seed, rules enforced in `ops.js`); v5 added
-`widthWeight` (default 1). All additive, filled by `normalizeState`, no
-migration step needed. A stored `sideOf` or `widthWeight` is always kept; the
-default only applies to units that have none. `npm test` runs
+`widthWeight` (default 1); v6 added `state.portfolios`. All additive, filled
+by `normalizeState`, no migration step needed. A stored `sideOf` or
+`widthWeight` is always kept; the default only applies to units that have
+none. **No existing field has ever moved**: v6 buildings stay exactly where
+they were, at the top level, and a portfolio only lists ids. `npm test` runs
 `tests/migration.test.mjs` (a saved v2 store loads with nothing lost),
 `tests/portfolio.test.mjs` (empty seed, templates, rules, selection, totals),
 `tests/structure.test.mjs` (add floor / unit / annex, the empty-unit and
 empty-floor guards, a rename through a save and reload), and
 `tests/widths.test.mjs` (weight normalization, the drag arithmetic and its
-15% floor, the annex staying out of the split, `setUnitWidths`).
+15% floor, the annex staying out of the split, `setUnitWidths`), and
+`tests/portfolios.test.mjs` (a pre-v6 store gathered into one portfolio with
+nothing lost, totals following the active portfolio, the last portfolio
+staying put, a removal naming what it holds, export/import across
+portfolios).
+
+### Portfolios
+
+A portfolio holds its buildings **by id**, so adding, renaming, or removing
+one never moves a building. Two invariants are kept by `normalizeState`
+(`withPortfolios` in `schema.js`), never by a component:
+
+- there is always at least one portfolio (a new one is named
+  `DEFAULT_PORTFOLIO_NAME`, "My properties")
+- every building is in exactly one portfolio — first claim wins, dead ids
+  are dropped, and a building no list claims is **adopted by the first**, so
+  it can never fall off the sheet
+
+Which portfolio is active is UI state, like the building selection
+(`src/lib/portfolios.js`: `resolvePortfolioId`, `activePortfolio`,
+`propertiesOf`, `portfolioState`, `portfolioSummaries`). The sheet, the
+building picker, the raise-rents sheet, the print view, and **the totals**
+cover the active portfolio; **Backup covers every portfolio**.
 
 ### Rules enforced in the data layer (`ops.js`)
 
@@ -93,8 +118,19 @@ empty-floor guards, a rename through a save and reload), and
   `splitRent` is kept (not counted) so splitting again restores it. The
   panel warns before turning splittable off on a split unit with a second
   rent.
-- **Removing a building** is refused while it has units. The last building
+- **Removing a building** is refused while it has units, unless the caller
+  passes `{ force: true }` — what the caption's confirm sends after naming
+  the contents. Either way the id leaves its portfolio. The last building
   may be removed; an empty sheet is a valid store.
+- **`describeContents(property)`** counts what a building holds (units, how
+  many with rent, tenants, bills, list items, notes) and writes the line the
+  confirm shows. Building bills at 0 are not counted: every template starts
+  with four of them.
+- **Portfolios**: `addPortfolio` (the caller makes it with `makePortfolio`,
+  so it knows the id), `renamePortfolio`, `removePortfolio`. The last
+  portfolio can never be removed; one holding buildings needs
+  `{ force: true }` and takes its buildings with it.
+  `describePortfolio(state, id)` writes that confirm's line.
 - **Removing a unit** is refused unless `isEmptyUnit()` (no rent, no second
   rent, no tenant, no bills, list items, or notes). **Removing a floor** is
   refused while anything is on it, the annex included. Both relayout what is
@@ -142,10 +178,12 @@ empty-floor guards, a rename through a save and reload), and
   backup is first moved to `rentroll:backup:<timestamp>`) and the app starts
   fresh from seed.
 - `exportJSON()` downloads `rent-roll-YYYY-MM-DD.json` in the stored shape.
-  `importJSON()` merges by id at every level: matched entities take the
-  file's scalar fields, nested lists merge recursively, unmatched entities
-  are appended, and entities missing from the file are kept. Nothing is ever
-  removed by an import.
+  `importJSON()` merges by id at every level — portfolio included: matched
+  entities take the file's scalar fields, nested lists merge recursively, a
+  matched portfolio takes the file's name and the **union** of both lists of
+  buildings, unmatched entities are appended, and entities missing from the
+  file are kept. Nothing is ever removed by an import, and `withPortfolios`
+  runs after so an imported building always lands in a portfolio.
 
 ### Unit widths
 
@@ -239,6 +277,22 @@ Amounts are plain numbers in dollars. Round only at display with
   `save()` first and refuses the photo with a sized error message if the
   browser quota is hit. The roof chip is hidden in photo view; the drawing
   data is untouched by photo mode.
+- **Portfolio bar** (`PortfolioBar.jsx`, under the header, top-left):
+  "+ Portfolio", then one chip per portfolio with its building count. The
+  active one is outlined amber and its name is an `InlineLabel` (tap to
+  rename). A two-tap `✕ Portfolio` names what would go with it; with one
+  portfolio there is no remove control at all. Switching is UI state and
+  also clears the building selection.
+- **Saved indicator** (`SaveState.jsx`, beside the title): after a write it
+  shows "Saved" and fades (`animate-save-flash`, 2s, `motion-reduce`); a
+  failed write shows "● Not saved — <reason>" and stays until one succeeds.
+  **There is no save button and there must never be one** — App's effect
+  writes on every state change. An explicit confirmed removal sets
+  `emptyingOnPurpose` for exactly one write, which is how `save()` is told
+  an empty sheet is deliberate.
+- **Removing a building** (caption, Build mode): a building with units shows
+  "Remove building" and the armed chip names its contents through
+  `TwoTapChip`'s `detail`; an empty one keeps the quiet `✕ Building`.
 - **Toolbar** (under the header): Raise rents, Undo (while a raise is
   undoable), Print / PDF, Backup. Chips are 40px tall for phones.
 - **Building picker** (`BuildingPicker.jsx`, under the toolbar, hidden with
@@ -262,7 +316,8 @@ Amounts are plain numbers in dollars. Round only at display with
   every box, `rentPerRental(unit) / totals.maxRent`; amber below 70%.
   `rentPerRental` is the larger half of a split unit. Hidden until any rent
   exists. `rentScale` is threaded App → Elevation → Building → boxes.
-- **Title block** shows six cells: collected/mo, collected/yr, if fully
+- **Title block** is labelled with the active portfolio's name, and shows
+  six cells: collected/mo, collected/yr, if fully
   leased (+vacancy), expenses/mo (property + unit bills), net/mo, net/yr.
   `computeTotals` returns every figure as a finite number, including on an
   empty sheet.
