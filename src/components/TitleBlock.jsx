@@ -1,94 +1,17 @@
-import { formatDollars, toAmount } from '../data/schema.js'
+import { formatDollars } from '../data/schema.js'
+import { billMonthly, computeTotals, rentPerRental, unitMonthly } from '../data/totals.js'
 
 // All components at module scope (see UnitBox.jsx for why).
-
-/** Monthly rent a unit brings in when leased (split-aware). */
-export function unitMonthly(unit) {
-  const rent = toAmount(unit.rent)
-  return unit.splittable && unit.isSplit ? rent + toAmount(unit.splitRent) : rent
-}
-
-/** Rent of one rental: a split unit counts its larger half. Used for the bars. */
-export function rentPerRental(unit) {
-  const rent = toAmount(unit.rent)
-  return unit.splittable && unit.isSplit ? Math.max(rent, toAmount(unit.splitRent)) : rent
-}
-
-/** A bill's monthly cost. 'once' bills are not recurring and count as 0. */
-export function billMonthly(bill) {
-  const amount = toAmount(bill.amount)
-  if (bill.cadence === 'monthly') return amount
-  if (bill.cadence === 'yearly') return amount / 12
-  return 0
-}
+// The totals math lives in src/data/totals.js; re-exported here so existing
+// imports keep working.
+export { billMonthly, computeTotals, rentPerRental, unitMonthly }
 
 /**
- * Totals for the title block and the print view. Every number is finite.
- *   collected      monthly rent from units whose status is 'leased'
- *   potential      monthly rent if every unit were leased
- *   vacancy        potential - collected
- *   propertyBills  monthly cost of building-level bills
- *   unitBills      monthly cost of unit-level bills
- *   bills          propertyBills + unitBills
- *   net            collected - bills;  annualNet = net * 12
- *   maxRent        highest rentPerRental across all units (scale for bars)
+ * The drafting title block. Totals ALWAYS cover the whole portfolio, whatever
+ * the sheet is drawing; `showing` names the one building drawn when the
+ * sheet is filtered so the label makes that unambiguous.
  */
-export function computeTotals(properties) {
-  let collected = 0
-  let potential = 0
-  let propertyBills = 0
-  let unitBills = 0
-  let units = 0
-  let leased = 0
-  let billCount = 0
-  let maxRent = 0
-
-  const list = Array.isArray(properties) ? properties : []
-  for (const p of list) {
-    for (const b of p.bills ?? []) {
-      propertyBills += billMonthly(b)
-      billCount += 1
-    }
-    for (const f of p.floors ?? []) {
-      for (const u of f.units ?? []) {
-        const m = unitMonthly(u)
-        units += 1
-        potential += m
-        maxRent = Math.max(maxRent, rentPerRental(u))
-        if (u.status === 'leased') {
-          collected += m
-          leased += 1
-        }
-        for (const b of u.bills ?? []) {
-          unitBills += billMonthly(b)
-          billCount += 1
-        }
-      }
-    }
-  }
-
-  const bills = propertyBills + unitBills
-  const net = collected - bills
-  return {
-    collected,
-    annual: collected * 12,
-    potential,
-    vacancy: potential - collected,
-    propertyBills,
-    unitBills,
-    bills,
-    billCount,
-    net,
-    annualNet: net * 12,
-    units,
-    leased,
-    maxRent,
-    properties: list.length,
-  }
-}
-
-/** The drafting title block: totals that update live as rents are typed. */
-export default function TitleBlock({ totals: t, saveError }) {
+export default function TitleBlock({ totals: t, saveError, showing = null }) {
   const today = new Date().toISOString().slice(0, 10)
 
   return (
@@ -113,11 +36,15 @@ export default function TitleBlock({ totals: t, saveError }) {
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-line/40 px-3 py-1.5 text-[9px] tracking-[0.2em] text-line/70 uppercase sm:px-4">
-        <span className="font-display text-ink">Rent Roll</span>
-        <span>Cleveland Heights</span>
+        <span className="font-display text-ink">Portfolio totals</span>
         <span>
           {t.properties} {t.properties === 1 ? 'bldg' : 'bldgs'} · {t.units} units · {t.billCount} bills
         </span>
+        {showing && (
+          <span className="text-amber">
+            Showing {showing} only · totals cover all {t.properties} buildings
+          </span>
+        )}
         <span>Sheet A-1 · {today}</span>
         {saveError ? (
           <span className="text-alert normal-case tracking-normal">Not saved: {saveError}</span>
