@@ -42,9 +42,30 @@ browser on its own; open the URL yourself. Stop it with `Ctrl-C`.
 Other scripts:
 
 ```sh
-npm run build     # production build to ./dist
+npm run build     # production build to ./dist (also writes dist/sw.js)
 npm run preview   # serve ./dist on http://localhost:4173 (also strictPort)
+npm run icons     # redraw the app icons into public/icons
+npm test          # the node test suites
 ```
+
+There is no service worker on the dev server — it exists only in a build —
+so `npm run dev` is never shadowed by a cache.
+
+## Install it on a phone
+
+The app ships a web manifest and an offline service worker, so it can live
+on a home screen:
+
+- **Android (Chrome):** open the deployed site and Chrome offers **Install
+  app** — in the ⋮ menu, or as a prompt at the bottom of the screen. It
+  appears once the site is served over HTTPS with the manifest and a
+  registered worker, which a production build on Vercel satisfies.
+- **iPhone (Safari):** open the site, then **Share → Add to Home Screen**.
+  iOS uses `apple-touch-icon.png` and opens the app without Safari chrome.
+
+After a deploy, a copy that is already open shows **"Update available —
+reload"** instead of swapping the app out underneath you. Nothing reloads
+on its own.
 
 ## Deploy to Vercel
 

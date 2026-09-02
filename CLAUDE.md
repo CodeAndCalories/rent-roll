@@ -210,6 +210,55 @@ Amounts are plain numbers in dollars. Round only at display with
 `Math.round` (`formatDollars()`). Empty input means 0, never NaN
 (`toAmount()` is the only way input becomes a stored amount).
 
+## Installed app (PWA)
+
+- `public/manifest.webmanifest`: standalone, navy theme and background,
+  icons at 192 and 512 in both `any` and `maskable`. iOS gets
+  `apple-touch-icon` plus the `apple-mobile-web-app-*` meta in
+  `index.html`.
+- **Icons are generated, not drawn by hand**: `npm run icons`
+  (`scripts/make-icons.mjs`) renders the blueprint elevation at 4x and
+  encodes the PNGs with node's own zlib — no image dependency. Maskable
+  variants keep the drawing inside the safe circle. Re-run it if the theme
+  colours change.
+- **Service worker** (`src/sw.js` is the SOURCE; a build-only plugin in
+  `vite.config.js` emits `dist/sw.js`):
+  - `__BUILD_ID__` is a hash of the build's asset names, which are content
+    hashes, so the cache name changes exactly when the build does.
+  - `activate` deletes every other `rentroll-shell-*` cache.
+  - Documents are network-first (a deploy is picked up on the next reload,
+    with the cache as the offline fallback); hashed assets are cache-first.
+  - A waiting worker never takes over on its own: `UpdatePrompt.jsx` shows
+    "Update available — reload" and only that button posts `SKIP_WAITING`.
+    `src/lib/sw.js` reloads once on `controllerchange`.
+  - **It must never touch localStorage**, cache anything that stands in for
+    it, or intercept a non-GET or cross-origin request.
+- Registration is production-only (`import.meta.env.DEV` guard) and the dev
+  server has no `sw.js` to serve, so `npm run dev` is never shadowed.
+
+## Mobile rules
+
+- Every tap target is at least 44px on a phone: `Chip` carries the size
+  (`size="tap"` default, 44px under `sm` and the 36px drafting size above),
+  status dots, width handles, the + floor and + unit tabs, panel rows, and
+  close buttons. Controls inside a unit box use negative margins so a 44px
+  target never changes the box's geometry, and `size="compact"` (36px) is
+  only for the chips that live in one — three 44px targets do not fit a
+  160px column. Split/Join is hidden while Build is on, which is what makes
+  room for the ✕.
+- **Every input is 16px or larger on a phone** (`text-base`, with the
+  drafting size restored at `sm:`), so iOS never zooms on focus. That is
+  why the viewport has no `maximum-scale`: pinch zoom stays available.
+- `viewport-fit=cover` plus `env(safe-area-inset-*)` on the header, the
+  title block, both bottom sheets, and the body.
+- `interactive-widget=resizes-content` and `keepFocusedFieldVisible`
+  (`controls.jsx`) keep the field being edited above the keyboard.
+- The page never scrolls sideways: `overflow-x: clip` on `body` (clip, not
+  hidden, so the sticky title block still works). Only the elevation
+  scrolls horizontally.
+- The toolbar's labels collapse under `sm` so its chips stay on one line at
+  380px.
+
 ## Stack
 
 - Vite + React (JavaScript, **not** TypeScript)
@@ -331,8 +380,11 @@ Amounts are plain numbers in dollars. Round only at display with
 - **Backup** (`Backup.jsx`): `exportJSON` downloads `rent-roll-YYYY-MM-DD.json`;
   import reads the file with `importJSON`, shows the merge report, and only
   applies on "Apply import". Nothing is removed by an import.
-- **Empty and error states**: `Elevation` shows "Empty sheet" with the add
-  button when there are no properties; a mass with no floors says "No
+- **First run**: `EmptyState` in `Elevation.jsx` is one line saying what
+  this is and one "+ Add building" chip. Nothing else — no tour, no sample
+  data.
+- **Empty and error states**: `Elevation` shows the first-run line with the
+  add button when there are no properties; a mass with no floors says "No
   floors · tap Build" ("· use + floor" while Build is on); a floor with no
   main units says "No units on this floor"; a photo that fails to decode shows a message inside its frame; the
   print view prints "No units" / "No bills entered" rows. `ErrorBoundary`
