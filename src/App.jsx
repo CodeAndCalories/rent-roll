@@ -4,6 +4,10 @@ import { formatDollars, makeFloor, makeProperty, makeUnit } from './data/schema.
 import Elevation from './components/Elevation.jsx'
 import TitleBlock, { computeTotals } from './components/TitleBlock.jsx'
 import UnitPanel from './components/UnitPanel.jsx'
+import RaiseRentsSheet, { applyChanges, describeRaise } from './components/RaiseRents.jsx'
+import BackupSheet, { describeReport } from './components/Backup.jsx'
+import PrintView from './components/PrintView.jsx'
+import { Chip } from './components/controls.jsx'
 
 // All components at module scope (see components/UnitBox.jsx for why).
 
@@ -13,6 +17,9 @@ export default function App() {
   const [saveError, setSaveError] = useState(null)
   const [openUnitId, setOpenUnitId] = useState(null)
   const [notice, setNotice] = useState(null)
+  const [dialog, setDialog] = useState(null) // 'raise' | 'backup' | null
+  const [printing, setPrinting] = useState(false)
+  const [undo, setUndo] = useState(null) // { changes, label } from the last raise
 
   // Latest state for callbacks that need to read it outside a render
   // (photo upload does a trial save before committing).
@@ -71,15 +78,62 @@ export default function App() {
     })
   }, [])
 
+  /** Apply a planned raise and remember how to undo it. */
+  const applyRaise = useCallback(({ changes, mode, amount }) => {
+    const before = computeTotals(stateRef.current.properties).collected
+    const next = applyChanges(stateRef.current, changes, 'after')
+    const after = computeTotals(next.properties).collected
+    const label = describeRaise(mode, amount)
+    setState((s) => applyChanges(s, changes, 'after'))
+    setUndo({ changes, label })
+    setDialog(null)
+    setNotice({
+      tone: 'amber',
+      undo: true,
+      text: `Raised ${changes.length} leased ${changes.length === 1 ? 'rent' : 'rents'} ${label}: ${formatDollars(before)} → ${formatDollars(after)} / mo.`,
+    })
+  }, [])
+
+  const undoRaise = () => {
+    if (!undo) return
+    setState((s) => applyChanges(s, undo.changes, 'before'))
+    setUndo(null)
+    setNotice({
+      tone: 'line',
+      text: `Undid the ${undo.label} raise on ${undo.changes.length} ${undo.changes.length === 1 ? 'unit' : 'units'}. Any rent edited by hand since was left as is.`,
+    })
+  }
+
+  const applyImport = useCallback((merged, report) => {
+    setState(merged)
+    setUndo(null)
+    setNotice({ tone: 'line', text: `Imported: ${describeReport(report)}.` })
+  }, [])
+
   const closePanel = useCallback(() => setOpenUnitId(null), [])
+  const closeDialog = useCallback(() => setDialog(null), [])
+  const stopPrinting = useCallback(() => setPrinting(false), [])
 
   const openUnit = openUnitId ? findUnit(state, openUnitId) : null
   const totals = computeTotals(state.properties)
 
+  if (printing) {
+    return <PrintView state={state} onBack={stopPrinting} />
+  }
+
   return (
     <div className="bg-blueprint-grid flex min-h-dvh flex-col">
       <SheetHeader warnings={loaded.warnings} collected={totals.collected} />
-      {notice && <Notice notice={notice} onDismiss={() => setNotice(null)} />}
+      <Tools
+        onRaise={() => setDialog('raise')}
+        onUndo={undo ? undoRaise : null}
+        undoLabel={undo?.label}
+        onPrint={() => setPrinting(true)}
+        onBackup={() => setDialog('backup')}
+      />
+      {notice && (
+        <Notice notice={notice} onDismiss={() => setNotice(null)} onUndo={notice.undo && undo ? undoRaise : null} />
+      )}
 
       <div className="flex-1 overflow-x-auto overflow-y-hidden pb-8">
         <Elevation
@@ -91,6 +145,7 @@ export default function App() {
           onRemoveProperty={removeProperty}
           onSetPhoto={setPhoto}
           onNotice={setNotice}
+          rentScale={totals.maxRent}
         />
       </div>
 
@@ -103,6 +158,13 @@ export default function App() {
           onChange={(patch) => updateUnit(openUnit.id, patch)}
           onClose={closePanel}
         />
+      )}
+
+      {dialog === 'raise' && (
+        <RaiseRentsSheet properties={state.properties} onApply={applyRaise} onClose={closeDialog} />
+      )}
+      {dialog === 'backup' && (
+        <BackupSheet state={state} onImport={applyImport} onNotice={setNotice} onClose={closeDialog} />
       )}
     </div>
   )
@@ -129,27 +191,60 @@ function SheetHeader({ warnings, collected }) {
   )
 }
 
+/** Sheet-level tools. 40px tall chips so they are easy to hit on a phone. */
+function Tools({ onRaise, onUndo, undoLabel, onPrint, onBackup }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 border-b border-line/40 px-4 py-2 sm:px-8">
+      <Chip onClick={onRaise} className="min-h-10" title="Model a rent increase across leased units">
+        Raise rents
+      </Chip>
+      {onUndo && (
+        <Chip tone="alert" onClick={onUndo} className="min-h-10" title="Put the rents back">
+          Undo {undoLabel}
+        </Chip>
+      )}
+      <Chip onClick={onPrint} className="min-h-10" title="Clean table view to print or save as PDF">
+        Print / PDF
+      </Chip>
+      <Chip onClick={onBackup} className="min-h-10" title="Export or import the JSON data">
+        Backup
+      </Chip>
+    </div>
+  )
+}
+
 const NOTICE_TONE = {
   alert: 'border-alert/40 bg-alert/10 text-alert',
   amber: 'border-amber/40 bg-amber/10 text-amber',
   line: 'border-line/40 bg-line/10 text-ink',
 }
 
-function Notice({ notice, onDismiss }) {
+function Notice({ notice, onDismiss, onUndo }) {
   return (
     <div
       role="status"
       className={`flex items-start justify-between gap-3 border-b px-4 py-2 text-xs sm:px-8 ${NOTICE_TONE[notice.tone] ?? NOTICE_TONE.line}`}
     >
-      <span>{notice.text}</span>
-      <button
-        type="button"
-        onClick={onDismiss}
-        aria-label="Dismiss"
-        className="-my-1 -mr-2 flex h-7 w-7 shrink-0 items-center justify-center opacity-70 hover:opacity-100"
-      >
-        ✕
-      </button>
+      <span className="min-w-0 break-words">{notice.text}</span>
+      <div className="flex shrink-0 items-center gap-1">
+        {onUndo && (
+          <button
+            type="button"
+            onClick={onUndo}
+            className="min-h-8 border border-current px-2 text-[9px] tracking-[0.2em] uppercase"
+          >
+            Undo
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Dismiss"
+          className="-my-1 -mr-2 flex h-8 w-8 items-center justify-center opacity-70 hover:opacity-100"
+        >
+          ✕
+        </button>
+      </div>
     </div>
   )
 }
