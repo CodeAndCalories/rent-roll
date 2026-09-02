@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { toAmount } from '../data/schema.js'
+import { formatDollars, toAmount } from '../data/schema.js'
+import { rentPerRental } from './TitleBlock.jsx'
 
 // Every component in this file is declared at MODULE scope. Never declare a
 // component inside another component's body: it gets a new identity each
@@ -15,11 +16,22 @@ const NEXT_STATUS = { leased: 'vacant', vacant: 'renovating', renovating: 'lease
  *   unit       the Unit record
  *   variant    'main' (in the building mass) | 'side' (hangs off the side)
  *   onChange   (patch) => void         partial update of this unit
- *   onOpen     () => void              tap on the label -> detail panel
+ *   onOpen     () => void              tap -> detail panel
  *   onFlip     () => void              side units only: flip left/right
  *   style      geometry from the parent (width/height)
+ *   rentScale  highest rent on the sheet; drives the bar along the bottom
+ *   readOnly   print view: text instead of inputs, no controls
  */
-export default function UnitBox({ unit, variant = 'main', onChange, onOpen, onFlip, style }) {
+export default function UnitBox({
+  unit,
+  variant = 'main',
+  onChange,
+  onOpen,
+  onFlip,
+  style,
+  rentScale = 0,
+  readOnly = false,
+}) {
   const vacant = unit.status === 'vacant'
   const renovating = unit.status === 'renovating'
   const split = Boolean(unit.splittable && unit.isSplit)
@@ -28,6 +40,7 @@ export default function UnitBox({ unit, variant = 'main', onChange, onOpen, onFl
   // Tapping anywhere on the box opens the detail panel, except on its own
   // controls (rent input, status dot, split, flip), which keep their jobs.
   const handleBoxTap = (e) => {
+    if (readOnly) return
     if (e.target.closest('button, input, select, textarea, label, a')) return
     onOpen?.()
   }
@@ -36,7 +49,8 @@ export default function UnitBox({ unit, variant = 'main', onChange, onOpen, onFl
     <div
       onClick={handleBoxTap}
       className={cx(
-        'relative flex min-w-0 cursor-pointer flex-col p-2',
+        'relative flex min-w-0 flex-col p-2 pb-3',
+        !readOnly && 'cursor-pointer',
         variant === 'main' && 'flex-1 border-r border-line last:border-r-0',
         variant === 'side' && 'shrink-0 border border-line bg-line/5',
         renovating && 'outline-dashed outline-1 -outline-offset-4 outline-amber/70',
@@ -62,17 +76,21 @@ export default function UnitBox({ unit, variant = 'main', onChange, onOpen, onFl
       )}
 
       <div className="relative flex items-start justify-between gap-1">
-        <button
-          type="button"
-          onClick={onOpen}
-          className="-my-1 min-h-8 truncate py-1 text-left text-[10px] leading-tight tracking-[0.18em] text-ink uppercase hover:text-amber"
-          title="Open unit"
-        >
-          {label}
-        </button>
+        {readOnly ? (
+          <span className="truncate text-[10px] leading-tight tracking-[0.18em] text-ink uppercase">{label}</span>
+        ) : (
+          <button
+            type="button"
+            onClick={onOpen}
+            className="-my-1 min-h-8 truncate py-1 text-left text-[10px] leading-tight tracking-[0.18em] text-ink uppercase hover:text-amber"
+            title="Open unit"
+          >
+            {label}
+          </button>
+        )}
 
         <div className="flex shrink-0 items-center gap-1">
-          {unit.splittable && (
+          {!readOnly && unit.splittable && (
             <button
               type="button"
               onClick={() => onChange({ isSplit: !unit.isSplit })}
@@ -82,7 +100,7 @@ export default function UnitBox({ unit, variant = 'main', onChange, onOpen, onFl
               {split ? 'Join' : 'Split'}
             </button>
           )}
-          {onFlip && (
+          {!readOnly && onFlip && (
             <button
               type="button"
               onClick={onFlip}
@@ -93,27 +111,40 @@ export default function UnitBox({ unit, variant = 'main', onChange, onOpen, onFl
               ⇄
             </button>
           )}
-          <StatusDot
-            status={unit.status}
-            onClick={() => onChange({ status: NEXT_STATUS[unit.status] ?? 'leased' })}
-          />
+          {readOnly ? (
+            <StatusMark status={unit.status} />
+          ) : (
+            <StatusDot
+              status={unit.status}
+              onClick={() => onChange({ status: NEXT_STATUS[unit.status] ?? 'leased' })}
+            />
+          )}
         </div>
       </div>
 
       <div className="relative mt-auto flex items-end gap-4">
-        <RentInput
-          value={unit.rent}
-          onCommit={(rent) => onChange({ rent })}
-          ariaLabel={split ? `${label} first half rent` : `${label} rent`}
-        />
-        {split && (
+        {readOnly ? (
+          <RentText value={unit.rent} />
+        ) : (
           <RentInput
-            value={unit.splitRent}
-            onCommit={(splitRent) => onChange({ splitRent })}
-            ariaLabel={`${label} second half rent`}
+            value={unit.rent}
+            onCommit={(rent) => onChange({ rent })}
+            ariaLabel={split ? `${label} first half rent` : `${label} rent`}
           />
         )}
+        {split &&
+          (readOnly ? (
+            <RentText value={unit.splitRent} />
+          ) : (
+            <RentInput
+              value={unit.splitRent}
+              onCommit={(splitRent) => onChange({ splitRent })}
+              ariaLabel={`${label} second half rent`}
+            />
+          ))}
       </div>
+
+      <RentBar unit={unit} scale={rentScale} />
     </div>
   )
 }
@@ -141,6 +172,21 @@ export function StatusDot({ status, onClick }) {
         )}
       />
     </button>
+  )
+}
+
+/** Non-interactive status dot for the print view. */
+export function StatusMark({ status }) {
+  return (
+    <span
+      role="img"
+      aria-label={`Status ${status}`}
+      title={status}
+      className={cx(
+        'mt-0.5 mr-0.5 block h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-line/60',
+        DOT[status] ?? 'bg-transparent',
+      )}
+    />
   )
 }
 
@@ -182,6 +228,37 @@ export function RentInput({ value, onCommit, ariaLabel, compact = false }) {
         )}
       />
     </label>
+  )
+}
+
+/** Read-only rent for the print view. Zero shows as a dash, never "$0". */
+export function RentText({ value, compact = false }) {
+  const n = toAmount(value)
+  return (
+    <span className={cx('min-w-0 flex-1 leading-tight text-ink tabular-nums', compact ? 'text-sm' : 'text-lg')}>
+      {n > 0 ? formatDollars(n) : <span className="text-line/40">—</span>}
+    </span>
+  )
+}
+
+/**
+ * Thin bar along the bottom edge: this unit's rent per rental as a share of
+ * the highest rent on the sheet. Below 70% it turns amber so an underpriced
+ * unit stands out. Hidden until at least one rent is entered.
+ */
+export function RentBar({ unit, scale }) {
+  if (!(scale > 0)) return null
+  const value = rentPerRental(unit)
+  const ratio = Math.max(0, Math.min(1, value / scale))
+  const low = value > 0 && ratio < 0.7
+  return (
+    <div
+      aria-hidden
+      title={`${Math.round(ratio * 100)}% of highest rent`}
+      className="pointer-events-none absolute inset-x-0 bottom-0 h-[3px] bg-line/15"
+    >
+      <div className={cx('h-full', low ? 'bg-amber' : 'bg-line/80')} style={{ width: `${ratio * 100}%` }} />
+    </div>
   )
 }
 

@@ -65,7 +65,13 @@ export function nextShape(shape) {
  * One property's figure: the photo with boxes, or the drawing (side boxes,
  * roof, stacked floors). floors[0] is the top floor.
  */
-export default function Building({ property, onUnitChange, onOpenUnit }) {
+export default function Building({
+  property,
+  onUnitChange,
+  onOpenUnit,
+  rentScale = 0,
+  readOnly = false,
+}) {
   if (isPhotoView(property)) {
     return (
       <PhotoBuilding
@@ -73,6 +79,8 @@ export default function Building({ property, onUnitChange, onOpenUnit }) {
         width={figureWidthFor(property)}
         onUnitChange={onUnitChange}
         onOpenUnit={onOpenUnit}
+        rentScale={rentScale}
+        readOnly={readOnly}
       />
     )
   }
@@ -80,36 +88,36 @@ export default function Building({ property, onUnitChange, onOpenUnit }) {
   const { massWidth, left, right } = layoutFor(property)
   // Floor level markers go on the side with no hanging unit.
   const markerSide = left.length > 0 && right.length === 0 ? 'right' : 'left'
+  const boxProps = { onUnitChange, onOpenUnit, rentScale, readOnly }
 
   return (
     <div className="flex items-end">
       {left.map((u) => (
-        <SideBox key={u.id} unit={u} edge="left" onUnitChange={onUnitChange} onOpenUnit={onOpenUnit} />
+        <SideBox key={u.id} unit={u} edge="left" {...boxProps} />
       ))}
 
       <div className="relative" style={{ width: massWidth }}>
         <Roof shape={property.shape} width={massWidth} />
         <div className="border-x border-b border-line bg-line/5">
+          {property.floors.length === 0 && (
+            <div className="flex h-16 items-center justify-center border-t border-dashed border-line/50 text-[9px] tracking-widest text-line/50 uppercase">
+              No floors{readOnly ? '' : ' · tap Edit'}
+            </div>
+          )}
           {property.floors.map((floor) => (
-            <FloorRow
-              key={floor.id}
-              floor={floor}
-              markerSide={markerSide}
-              onUnitChange={onUnitChange}
-              onOpenUnit={onOpenUnit}
-            />
+            <FloorRow key={floor.id} floor={floor} markerSide={markerSide} {...boxProps} />
           ))}
         </div>
       </div>
 
       {right.map((u) => (
-        <SideBox key={u.id} unit={u} edge="right" onUnitChange={onUnitChange} onOpenUnit={onOpenUnit} />
+        <SideBox key={u.id} unit={u} edge="right" {...boxProps} />
       ))}
     </div>
   )
 }
 
-function FloorRow({ floor, markerSide, onUnitChange, onOpenUnit }) {
+function FloorRow({ floor, markerSide, onUnitChange, onOpenUnit, rentScale, readOnly }) {
   const units = floor.units
     .filter(isMain)
     .slice()
@@ -117,6 +125,11 @@ function FloorRow({ floor, markerSide, onUnitChange, onOpenUnit }) {
 
   return (
     <div className="relative flex border-t border-line" style={{ height: FLOOR_H }}>
+      {units.length === 0 && (
+        <div className="flex flex-1 items-center justify-center text-[9px] tracking-widest text-line/40 uppercase">
+          No units on this floor
+        </div>
+      )}
       {/* level marker: short tick + label, outside the wall */}
       <span
         className={cx(
@@ -132,6 +145,8 @@ function FloorRow({ floor, markerSide, onUnitChange, onOpenUnit }) {
           key={u.id}
           unit={u}
           variant="main"
+          rentScale={rentScale}
+          readOnly={readOnly}
           onChange={(patch) => onUnitChange(u.id, patch)}
           onOpen={() => onOpenUnit(u.id)}
         />
@@ -141,11 +156,13 @@ function FloorRow({ floor, markerSide, onUnitChange, onOpenUnit }) {
 }
 
 /** A one-storey box hanging off the mass, bottom on grade. */
-function SideBox({ unit, edge, onUnitChange, onOpenUnit }) {
+function SideBox({ unit, edge, onUnitChange, onOpenUnit, rentScale, readOnly }) {
   return (
     <UnitBox
       unit={unit}
       variant="side"
+      rentScale={rentScale}
+      readOnly={readOnly}
       style={{
         width: SIDE_W,
         height: SIDE_H,

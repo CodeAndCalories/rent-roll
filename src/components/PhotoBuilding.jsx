@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { RentInput, StatusDot } from './UnitBox.jsx'
+import { RentBar, RentInput, RentText, StatusDot, StatusMark } from './UnitBox.jsx'
 import { cx } from './controls.jsx'
 
 // All components at module scope (see UnitBox.jsx for why).
@@ -15,9 +15,17 @@ const MIN_W = 0.04
 const MIN_H = 0.04
 const NEXT_STATUS = { leased: 'vacant', vacant: 'renovating', renovating: 'leased' }
 
-export default function PhotoBuilding({ property, width, onUnitChange, onOpenUnit }) {
+export default function PhotoBuilding({
+  property,
+  width,
+  onUnitChange,
+  onOpenUnit,
+  rentScale = 0,
+  readOnly = false,
+}) {
   const containerRef = useRef(null)
   const [measured, setMeasured] = useState(null)
+  const [broken, setBroken] = useState(false)
   const size = validSize(property.photoSize) ?? measured
   const ratio = size ? size.h / size.w : 2 / 3
   const height = Math.round(width * ratio)
@@ -35,6 +43,7 @@ export default function PhotoBuilding({ property, width, onUnitChange, onOpenUni
         alt={`${property.name || 'Building'} photo`}
         draggable={false}
         onDragStart={(e) => e.preventDefault()}
+        onError={() => setBroken(true)}
         onLoad={(e) => {
           if (!validSize(property.photoSize)) {
             setMeasured({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })
@@ -42,12 +51,27 @@ export default function PhotoBuilding({ property, width, onUnitChange, onOpenUni
         }}
         className="pointer-events-none absolute inset-0 h-full w-full object-cover"
       />
+
+      {broken && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4 text-center text-[10px] tracking-widest text-alert uppercase">
+          Photo could not be displayed. Switch to Drawing, or replace the photo.
+        </div>
+      )}
+
+      {units.length === 0 && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-2 text-center text-[9px] tracking-widest text-line/70 uppercase">
+          No units{readOnly ? '' : ' · tap Edit'}
+        </div>
+      )}
+
       {units.map((u) => (
         <PhotoUnitBox
           key={u.id}
           unit={u}
           box={validBox(u.photoBox) ?? defaults.get(u.id)}
           containerRef={containerRef}
+          rentScale={rentScale}
+          readOnly={readOnly}
           onChange={(patch) => onUnitChange(u.id, patch)}
           onOpen={() => onOpenUnit(u.id)}
         />
@@ -57,13 +81,15 @@ export default function PhotoBuilding({ property, width, onUnitChange, onOpenUni
 }
 
 /** One draggable, resizable box. The label opens the panel; the rest drags. */
-function PhotoUnitBox({ unit, box, containerRef, onChange, onOpen }) {
+function PhotoUnitBox({ unit, box, containerRef, rentScale, readOnly, onChange, onOpen }) {
   const [live, setLive] = useState(null) // box during a gesture
   const gesture = useRef(null)
   const b = live ?? box
   const vacant = unit.status === 'vacant'
+  const label = unit.name || 'Unit'
 
   const begin = (mode) => (e) => {
+    if (readOnly) return
     if (mode === 'move' && e.target.closest('button, input, select, label, textarea')) return
     if (e.button != null && e.button !== 0) return
     const rect = containerRef.current?.getBoundingClientRect()
@@ -100,16 +126,18 @@ function PhotoUnitBox({ unit, box, containerRef, onChange, onOpen }) {
     if (g.last !== g.start) onChange({ photoBox: g.last })
   }
 
+  const handlers = readOnly
+    ? {}
+    : { onPointerDown: begin('move'), onPointerMove: move, onPointerUp: end, onPointerCancel: end }
+
   return (
     <div
       role="group"
-      aria-label={`${unit.name || 'Unit'} box`}
-      onPointerDown={begin('move')}
-      onPointerMove={move}
-      onPointerUp={end}
-      onPointerCancel={end}
+      aria-label={`${label} box`}
+      {...handlers}
       className={cx(
-        'absolute flex cursor-move flex-col overflow-hidden border backdrop-blur-[1px]',
+        'absolute flex flex-col overflow-hidden border backdrop-blur-[1px]',
+        !readOnly && 'cursor-move',
         vacant ? 'border-alert bg-sheet/40' : 'border-line bg-sheet/45',
         live && 'ring-1 ring-amber',
       )}
@@ -118,42 +146,58 @@ function PhotoUnitBox({ unit, box, containerRef, onChange, onOpen }) {
         top: pct(b.y),
         width: pct(b.w),
         height: pct(b.h),
-        touchAction: 'none',
+        touchAction: readOnly ? 'auto' : 'none',
       }}
     >
       {vacant && <div aria-hidden className="hatch-45 pointer-events-none absolute inset-0" />}
 
       <div className="relative flex items-start justify-between gap-1 px-1 pt-0.5">
-        <button
-          type="button"
-          onClick={onOpen}
-          className="min-w-0 truncate text-[9px] leading-tight tracking-[0.15em] text-ink uppercase hover:text-amber"
-          title="Open unit"
-        >
-          {unit.name || 'Unit'}
-        </button>
-        <StatusDot
-          status={unit.status}
-          onClick={() => onChange({ status: NEXT_STATUS[unit.status] ?? 'leased' })}
-        />
+        {readOnly ? (
+          <span className="min-w-0 truncate text-[9px] leading-tight tracking-[0.15em] text-ink uppercase">{label}</span>
+        ) : (
+          <button
+            type="button"
+            onClick={onOpen}
+            className="min-w-0 truncate text-[9px] leading-tight tracking-[0.15em] text-ink uppercase hover:text-amber"
+            title="Open unit"
+          >
+            {label}
+          </button>
+        )}
+        {readOnly ? (
+          <StatusMark status={unit.status} />
+        ) : (
+          <StatusDot
+            status={unit.status}
+            onClick={() => onChange({ status: NEXT_STATUS[unit.status] ?? 'leased' })}
+          />
+        )}
       </div>
 
-      <div className="relative mt-auto px-1 pb-1">
-        <RentInput
-          compact
-          value={unit.rent}
-          onCommit={(rent) => onChange({ rent })}
-          ariaLabel={`${unit.name || 'Unit'} rent`}
-        />
+      <div className="relative mt-auto flex px-1 pb-1.5">
+        {readOnly ? (
+          <RentText compact value={unit.rent} />
+        ) : (
+          <RentInput
+            compact
+            value={unit.rent}
+            onCommit={(rent) => onChange({ rent })}
+            ariaLabel={`${label} rent`}
+          />
+        )}
       </div>
 
-      <div
-        onPointerDown={begin('resize')}
-        role="button"
-        aria-label={`Resize ${unit.name || 'unit'} box`}
-        className="absolute right-0 bottom-0 h-4 w-4 cursor-nwse-resize border-t border-l border-line bg-sheet/70"
-        style={{ touchAction: 'none' }}
-      />
+      <RentBar unit={unit} scale={rentScale} />
+
+      {!readOnly && (
+        <div
+          onPointerDown={begin('resize')}
+          role="button"
+          aria-label={`Resize ${label} box`}
+          className="absolute right-0 bottom-0 h-4 w-4 cursor-nwse-resize border-t border-l border-line bg-sheet/70"
+          style={{ touchAction: 'none' }}
+        />
+      )}
     </div>
   )
 }
