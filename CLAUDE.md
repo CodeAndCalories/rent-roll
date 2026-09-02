@@ -98,6 +98,36 @@ Amounts are plain numbers in dollars. Round only at display with
   under `@theme`; the drafting grid is the `bg-blueprint-grid` utility)
 - No backend. All data in `localStorage` for now.
 - No state library, no router yet, no UI kit. Keep dependencies minimal.
+- No animation libraries.
+
+## UI rules
+
+- **Every component is declared at module scope.** Never define a component
+  inside another component's body. An inline component gets a new identity
+  each render, React remounts it, and the rent input drops keyboard focus
+  after every keystroke. This has bitten the project before.
+- Keys are stable ids (`unit.id`, `floor.id`, `property.id`). Never use array
+  index as a key on anything that contains an input.
+- Rent inputs: `type="text" inputMode="decimal"`, font-size ≥ 16px (iOS zoom),
+  local text draft committed through `toAmount()` on every change.
+- The elevation is drawn from data. Nothing about the user's units, floors,
+  or buildings is hardcoded in components.
+- `floors[0]` is the top floor (seed order: 3F, 2F, Street).
+- A `'side'` unit hangs off the mass on `unit.sideOf` (`'left'` | `'right'`,
+  default right). `sideOf` is written by the UI and preserved by the data
+  layer as an unknown field; promote it to a `makeUnit()` default in the next
+  schema change.
+- Totals (`computeTotals` in `TitleBlock.jsx`): collected counts units whose
+  status is `'leased'` only. Vacant and renovating units count toward "if
+  fully leased" and the vacancy gap. `'once'` bills are excluded from monthly
+  net.
+- Components: `Elevation.jsx` (sheet + grade line), `Building.jsx` (roof,
+  floors, side boxes, caption, geometry constants), `UnitBox.jsx` (box, rent
+  input, status dot, split party wall), `TitleBlock.jsx` (totals).
+- Theme: sheet `#08202E`, line `#5FB6D0`, text `#A8E8F5`, amber `#F2B441`,
+  alert `#F2704B`; 22px grid at 7%; DM Mono for numbers and labels, Archivo
+  uppercase wide-tracked for headings. Fonts load from Google Fonts in
+  `index.html`.
 
 ## Dev server
 
