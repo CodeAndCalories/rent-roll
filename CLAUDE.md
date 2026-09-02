@@ -66,13 +66,17 @@ Schema history: v1 initial; v2 added `photoSize`, `view`, `sideOf` (default
 field changes (empty seed, rules enforced in `ops.js`). All additive, filled
 by `normalizeState`, no migration step needed. A stored `sideOf` is always
 kept; the default only applies to units that have none. `npm test` runs
-`tests/migration.test.mjs` (a saved v2 store loads with nothing lost) and
-`tests/portfolio.test.mjs` (empty seed, templates, rules, selection, totals).
+`tests/migration.test.mjs` (a saved v2 store loads with nothing lost),
+`tests/portfolio.test.mjs` (empty seed, templates, rules, selection, totals),
+and `tests/structure.test.mjs` (add floor / unit / annex, the empty-unit and
+empty-floor guards, a rename through a save and reload).
 
 ### Rules enforced in the data layer (`ops.js`)
 
 - All unit and property writes from the UI go through `patchUnit` /
-  `patchProperty` / `setSideAnnex` / `setSplittable` / `removeProperty`.
+  `patchProperty` / `setSideAnnex` / `setSplittable` / `removeProperty`,
+  and every structural write through `addFloor` / `addUnit` /
+  `addSideAnnex` / `removeUnit` / `removeFloor` / `renameFloor`.
   A write that would break a rule throws `RuleError` and the state is
   unchanged; App shows the message as a notice.
 - **Side annex** (`position: 'side'`): only on the bottom floor
@@ -87,14 +91,25 @@ kept; the default only applies to units that have none. `npm test` runs
   rent.
 - **Removing a building** is refused while it has units. The last building
   may be removed; an empty sheet is a valid store.
+- **Removing a unit** is refused unless `isEmptyUnit()` (no rent, no second
+  rent, no tenant, no bills, list items, or notes). **Removing a floor** is
+  refused while anything is on it, the annex included. Both relayout what is
+  left (one main unit → full, two → left/right).
+- **Adding**: `addFloor` puts a floor on top, labelled off the old top
+  floor (`nextFloorLabel`), with one unit on it. `addUnit` appends to a
+  floor and relays it out. `addSideAnnex(state, id, side)` hangs one off the
+  bottom floor and is refused when that floor already has one, or when the
+  building has no floors.
 
 - **Split units.** When `isSplit` is true, `rent` is the first half and
   `splitRent` is the second half. When not split, `rent` is the whole unit and
   `splitRent` is ignored but kept.
 - **Seed** (`seedData()`) is an EMPTY sheet. Buildings come from
   `src/data/templates.js`: Single family, Duplex (stacked), Duplex (side by
-  side), Triplex, Fourplex, Mixed use w/ storefront, Blank. Templates are
-  data only (floors top-first, units with positions, roof shape);
+  side), Triplex, Fourplex, Blank — common layouts only, and a template is
+  a starting point, not the finished building. No template ships a side
+  annex; that stays a per-unit toggle. Templates are data only (floors
+  top-first, units with positions, roof shape);
   `buildFromTemplate(id, name)` makes a Property with fresh ids, rents at 0,
   and four building bills at 0 (Mortgage, Property taxes, Insurance, Water).
   Never hardcode a building, unit count, or unit name into a component.
@@ -156,14 +171,26 @@ Amounts are plain numbers in dollars. Round only at display with
 - **Sheet layout** (`Elevation.jsx`): a figures row with feet on the grade
   line, then the grade line as a block, then a captions row. Each caption is
   given `figureWidthFor(property)` so it lines up under its figure, and can
-  grow (structure editor) without moving the grade line.
-- **Structure editor** (`StructureEditor.jsx`, behind the caption's Edit
-  chip): add a floor on top, rename floors, add units, remove units. Guards:
-  a unit is removable only when `isEmptyUnit()` (no rent, tenant, bills,
-  tasks, notes) and with a two-tap confirm; a floor only when it has no
-  units; a building only when it has no units and is not the last one.
-  New buildings come from `newProperty()` in `App.jsx` (two floors, one unit
-  each).
+  grow (the Build hint line) without moving the grade line.
+- **Build handles** (`Building.jsx`, behind the caption's Build chip; which
+  building is in Build mode is `buildId` state in `Elevation.jsx`, never
+  stored, one at a time). The handles are drawn on the figure itself: a
+  dashed `+ floor` strip above the roof, a dashed `+` tab on the right edge
+  of each floor, a dashed `+ annex` tab at the free outside edge of the
+  bottom floor (only when that floor has none), a two-tap ✕ on every empty
+  unit and empty floor, and `✕ Building` in the caption once a building has
+  no units. The `+` tab sits inside the mass and the annex tab is positioned
+  absolutely, so Build never changes a figure's width or moves a caption.
+  Build is hidden in photo view, and never renders in the print view. Every
+  handle calls `ops.js`; the guards live there, not in the component.
+- **Inline rename**: with Build on, a unit or floor label is an
+  `InlineLabel` (`controls.jsx`) — tap to edit in place, Enter or blur
+  commits, Escape cancels (a ref marks the cancel before the blur, which
+  still closes over the old draft). Renaming from the unit panel is
+  unaffected.
+- **Unit labels** wrap to two lines and drop one size step past 12
+  characters (`labelClass()` in `UnitBox.jsx`) rather than truncating, so a
+  narrow box still reads.
 - **Photo mode** (`PhotoBuilding.jsx`): when `view === 'photo'` and a photo
   exists, the figure is the photo at `max(totalWidth, 480)` px wide with one
   translucent box per unit. Boxes drag and resize with Pointer Events
@@ -214,8 +241,8 @@ Amounts are plain numbers in dollars. Round only at display with
   applies on "Apply import". Nothing is removed by an import.
 - **Empty and error states**: `Elevation` shows "Empty sheet" with the add
   button when there are no properties; a mass with no floors says "No
-  floors · tap Edit"; a floor with no main units says "No units on this
-  floor"; a photo that fails to decode shows a message inside its frame; the
+  floors · tap Build" ("· use + floor" while Build is on); a floor with no
+  main units says "No units on this floor"; a photo that fails to decode shows a message inside its frame; the
   print view prints "No units" / "No bills entered" rows. `ErrorBoundary`
   (mounted in `main.jsx`) replaces a crashed tree with the error, a Reload
   button, and a "Download backup" button that exports what is in storage.
