@@ -38,7 +38,7 @@ Lives in `src/data/schema.js` (shapes, defaults, factories, empty seed),
 (building templates as data), and `src/data/totals.js` (totals math).
 
 ```
-State    { version, updatedAt, properties[] }          // version: 4
+State    { version, updatedAt, properties[] }          // version: 5
 Property { id, name, address, shape, photo, photoSize, view, floors[], bills[] }
   shape: 'gable' | 'flat' | 'mansard' | 'custom'
   photo: null or a data-URL string (JPEG, resized to <= 1200px wide; the
@@ -49,6 +49,7 @@ Property { id, name, address, shape, photo, photoSize, view, floors[], bills[] }
 Floor { id, label, units[] }            // label like "3F", "2F", "Street"
 Unit {
   id, name, position,                   // position: 'left' | 'right' | 'full' | 'side'
+  widthWeight,                          // share of the floor's width (default 1)
   rent, status,                         // status: 'leased' | 'vacant' | 'renovating'
   tenant, leaseStart, leaseEnd,         // dates as 'YYYY-MM-DD' or null
   splittable, isSplit, splitRent,       // for the double single
@@ -63,13 +64,16 @@ Note  { id, text, createdAt }
 
 Schema history: v1 initial; v2 added `photoSize`, `view`, `sideOf` (default
 `'right'`), `photoBox`; v3 changed the `sideOf` default to `'left'`; v4 has no
-field changes (empty seed, rules enforced in `ops.js`). All additive, filled
-by `normalizeState`, no migration step needed. A stored `sideOf` is always
-kept; the default only applies to units that have none. `npm test` runs
+field changes (empty seed, rules enforced in `ops.js`); v5 added
+`widthWeight` (default 1). All additive, filled by `normalizeState`, no
+migration step needed. A stored `sideOf` or `widthWeight` is always kept; the
+default only applies to units that have none. `npm test` runs
 `tests/migration.test.mjs` (a saved v2 store loads with nothing lost),
 `tests/portfolio.test.mjs` (empty seed, templates, rules, selection, totals),
-and `tests/structure.test.mjs` (add floor / unit / annex, the empty-unit and
-empty-floor guards, a rename through a save and reload).
+`tests/structure.test.mjs` (add floor / unit / annex, the empty-unit and
+empty-floor guards, a rename through a save and reload), and
+`tests/widths.test.mjs` (weight normalization, the drag arithmetic and its
+15% floor, the annex staying out of the split, `setUnitWidths`).
 
 ### Rules enforced in the data layer (`ops.js`)
 
@@ -95,6 +99,11 @@ empty-floor guards, a rename through a save and reload).
   rent, no tenant, no bills, list items, or notes). **Removing a floor** is
   refused while anything is on it, the annex included. Both relayout what is
   left (one main unit → full, two → left/right).
+- **Unit widths**: `setUnitWidths(state, propertyId, floorId, weights)`
+  writes `widthWeight` on the units it names and leaves the rest alone, so a
+  drag only ever stores the pair it moved. A weight that is not a positive
+  number falls back to 1, one aimed at a side annex is ignored, and a write
+  that changes nothing returns the very same state.
 - **Adding**: `addFloor` puts a floor on top, labelled off the old top
   floor (`nextFloorLabel`), with one unit on it. `addUnit` appends to a
   floor and relays it out. `addSideAnnex(state, id, side)` hangs one off the
@@ -137,6 +146,25 @@ empty-floor guards, a rename through a save and reload).
   file's scalar fields, nested lists merge recursively, unmatched entities
   are appended, and entities missing from the file are kept. Nothing is ever
   removed by an import.
+
+### Unit widths
+
+The main units on a floor split its width in proportion to their
+`widthWeight` (default 1), so a floor of all-1s is the equal split every
+store drew before v5. The arithmetic lives in `src/lib/widths.js` — no React
+in it, so the drag handle's behaviour is tested in node:
+
+- `sharesOf(units)` → fractions summing to 1; `growOf(units)` → the same
+  scaled to the unit count, which is what goes on the box as `flex-grow`
+  (equal weights give 1 each, exactly what `flex-1` did).
+- `resizePair(units, i, delta)` moves the shared edge between units `i` and
+  `i + 1` by a fraction of the floor. The pair's combined share never
+  changes, so no other unit moves, and neither side drops below
+  `MIN_SHARE` (0.15) — or half the pair, when the pair itself holds less
+  than twice that.
+- `equalizePair(units, i)` is the double-tap reset.
+- A side annex is never in the split: it keeps `SIDE_W` and its weight is
+  ignored.
 
 ### Money
 
@@ -183,6 +211,15 @@ Amounts are plain numbers in dollars. Round only at display with
   absolutely, so Build never changes a figure's width or moves a caption.
   Build is hidden in photo view, and never renders in the print view. Every
   handle calls `ops.js`; the guards live there, not in the component.
+- **Width handles** (`WidthHandle` in `Building.jsx`, Build mode only): a
+  zero-width flex item on each shared wall with a 24px target over it, so it
+  costs the drawing no space and the figure never moves. Pointer Events with
+  pointer capture and `touch-action: none` (as in photo mode), so a thumb
+  can drag it without scrolling the sheet. The drag previews through draft
+  weights held in `FloorRow`; the release commits once through
+  `structure.setWidths` → `ops.setUnitWidths`. A second tap within
+  `DOUBLE_TAP_MS` (350) resets the pair to equal, and a real drag never
+  counts as the first of two taps. Floor heights are never touched.
 - **Inline rename**: with Build on, a unit or floor label is an
   `InlineLabel` (`controls.jsx`) — tap to edit in place, Enter or blur
   commits, Escape cancels (a ref marks the cancel before the blur, which
