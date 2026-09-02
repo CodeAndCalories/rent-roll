@@ -123,7 +123,22 @@ Amounts are plain numbers in dollars. Round only at display with
   net.
 - Components: `Elevation.jsx` (sheet + grade line), `Building.jsx` (roof,
   floors, side boxes, caption, geometry constants), `UnitBox.jsx` (box, rent
-  input, status dot, split party wall), `TitleBlock.jsx` (totals).
+  input, status dot, split party wall), `TitleBlock.jsx` (totals),
+  `UnitPanel.jsx` (detail panel: header fields + Bills / List / Updates tabs).
+- Unit edits flow through `updateUnit(unitId, patch)` in `App.jsx`, where
+  `patch` is a partial unit or a function `(unit) => partial`. Use the
+  function form for anything that appends to or filters `bills`, `tasks`, or
+  `notes` so two quick edits never clobber each other.
+- The panel is a bottom sheet under `sm` and a right drawer from `sm` up.
+  Tapping anywhere on a unit box opens it, except on the box's own controls
+  (`UnitBox.handleBoxTap` ignores buttons, inputs, selects, labels).
+- Deleting a bill, list item, or note is two taps (arm, then confirm within
+  3s). Nothing in the panel can delete a unit.
+- Lease flag: `leaseFlag()` in `UnitPanel.jsx` shows amber "renews soon" when
+  `leaseEnd` is 0–60 days out (inclusive), alert "ended" when past.
+- Unit-level bills are summed per unit in the panel (`unitBillsMonthly`).
+  `computeTotals` already includes both property bills and unit bills in
+  "net after bills"; the panel reuses `billMonthly` so the two agree.
 - Theme: sheet `#08202E`, line `#5FB6D0`, text `#A8E8F5`, amber `#F2B441`,
   alert `#F2704B`; 22px grid at 7%; DM Mono for numbers and labels, Archivo
   uppercase wide-tracked for headings. Fonts load from Google Fonts in
