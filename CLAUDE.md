@@ -38,8 +38,11 @@ Lives in `src/data/schema.js` (shapes, defaults, factories, empty seed),
 (building templates as data), and `src/data/totals.js` (totals math).
 
 ```
-State     { version, updatedAt, portfolios[], properties[] }   // version: 7
+State     { version, updatedAt, portfolios[], properties[], scenarios[] }   // version: 8
 Portfolio { id, name, propertyIds[] }   // the buildings it holds, by id
+Scenario  { id, portfolioId, name, note, createdAt, properties[] }
+                                        // a whole COPY of one portfolio's buildings from
+                                        // when it was made, fresh ids, nothing factual
 Property  { id, name, address, shape, photo, photoSize, view, floors[], bills[] }
   shape: 'gable' | 'flat' | 'mansard' | 'custom'
   photo: null or a data-URL string (JPEG, resized to <= 1200px wide; the
@@ -74,8 +77,8 @@ Schema history: v1 initial; v2 added `photoSize`, `view`, `sideOf` (default
 `'right'`), `photoBox`; v3 changed the `sideOf` default to `'left'`; v4 has no
 field changes (empty seed, rules enforced in `ops.js`); v5 added
 `widthWeight` (default 1); v6 added `state.portfolios`; v7 added
-`unit.payments` (default `{}`). All additive, filled by `normalizeState`,
-no migration step needed. A stored `sideOf` or
+`unit.payments` (default `{}`); v8 added `state.scenarios` (default `[]`).
+All additive, filled by `normalizeState`, no migration step needed. A stored `sideOf` or
 `widthWeight` is always kept; the default only applies to units that have
 none. **No existing field has ever moved**: v6 buildings stay exactly where
 they were, at the top level, and a portfolio only lists ids. `npm test` runs
@@ -96,7 +99,13 @@ Angeles and Tokyo, the removal guards counting records, export/import
 round-tripping history), and `tests/leases.test.mjs` (days remaining from
 local midnight — today 0, yesterday -1, 30 and 90 on their edges — in this
 process and in Los Angeles and Tokyo, the overview's order and groups, the
-undated units in their own group).
+undated units in their own group), and `tests/scenarios.test.mjs` (a fork
+as an independent copy with fresh ids and nothing factual, a scenario edit
+leaving actual the same objects, an actual edit leaving the scenario the
+same object, payments and photos stripped even from a write aimed at a
+scenario, a unit added in a scenario not in actual, the compare table's
+numbers, portfolio removal taking its scenarios, the cap, and save/load
+plus export/import round trips).
 
 ### Portfolios
 
@@ -188,6 +197,54 @@ panel's `leaseFlag` ("renews soon" within `RENEW_WINDOW_DAYS` = 60,
 "ended" when past) lives here too and is re-exported by `UnitPanel.jsx`.
 Nothing here writes: the schema, the totals, and payments are untouched.
 
+### Scenarios
+
+Alternate versions of a portfolio to build, keep, and compare against
+reality. A scenario is a **copy, not an overlay**: `forkScenario(state,
+portfolioId, { name })` (`src/data/scenarios.js`) copies the portfolio's
+buildings whole — structure, floors, units, rents, statuses, widths,
+splits, roof, building bills, unit bills — with **fresh ids at every
+level**, so no id in a scenario can name anything in actual data. Nothing
+factual comes along: `stripForScenario` (`schema.js`) clears photos,
+payment records, tenants, lease dates, list items, and notes, and runs
+again on every load (`makeScenario`) and every scenario write, so a
+scenario can never come to hold them. From the fork on, the two are
+independent: editing a scenario never touches actual data, editing actual
+never changes a scenario. Say so in the UI: a scenario is a snapshot from
+when it was made.
+
+- **Every write names its target.** `ops.applyTo(state, target, fn)` is
+  the only way the app writes: `target` is `ACTUAL` or
+  `scenarioTarget(id)`. A scenario target hands `fn` `scenarioView(state,
+  scenario)` — the scenario's buildings where actual ones would be, one
+  throwaway portfolio, no scenarios — and takes back **only the view's
+  `properties`**, stripped, into that scenario. `state.properties`,
+  `state.portfolios`, and every other scenario are the very same objects
+  afterwards. A scenario id that no longer exists is refused with
+  `RuleError`, never redirected to actual. In `App.jsx`, `write(fn)` aims
+  at `targetRef.current`, which follows `scenarioId` (never a lookup), and
+  `writeActual(fn)` is for writes about real data whatever the sheet
+  shows: portfolios and the scenarios themselves.
+- **Cap**: `SCENARIO_CAP` = 6 per portfolio; `addScenario` refuses the
+  seventh with `SCENARIO_CAP_REASON` (whole copies in a small storage).
+  Before a fork, App does a trial `save()` and refuses with a sized
+  message on quota — a scenario is written whole or not at all.
+- **Deleting** a scenario is `removeScenario` behind a two-tap that names
+  it (`describeScenario`). `removePortfolio` takes the portfolio's
+  scenarios with it, `describePortfolio` counts them ("· 2 scenarios"),
+  and a portfolio with scenarios needs `{ force: true }` even with no
+  buildings.
+- **Compare**: `compareTable(actualProperties, scenarios)` — Actual first,
+  one column per scenario, `COMPARE_ROWS` (units, collected/mo, if fully
+  leased, expenses/mo, net/mo, net/yr). Every cell is that source's own
+  `computeTotals` figure; a scenario cell carries its delta from actual
+  and a tone, amber for better, alert for worse, none for a unit count.
+- **Backup** exports scenarios with the state; `importJSON` merges them by
+  id (`mergeScenario`, buildings merged inside, counted in a scratch
+  report) and never removes one.
+- No "apply scenario to actual". One-way copying is what keeps the rules
+  simple.
+
 ### Rules enforced in the data layer (`ops.js`)
 
 - All unit and property writes from the UI go through `patchUnit` /
@@ -267,9 +324,9 @@ Nothing here writes: the schema, the totals, and payments are untouched.
   backup is first moved to `rentroll:backup:<timestamp>`) and the app starts
   fresh from seed.
 - `exportJSON()` downloads `rent-roll-YYYY-MM-DD.json` in the stored shape.
-  `importJSON()` merges by id at every level — portfolio included, and
-  payment records by their month key: matched entities take the file's
-  scalar fields, nested lists merge recursively, a
+  `importJSON()` merges by id at every level — portfolio and scenario
+  included, and payment records by their month key: matched entities take
+  the file's scalar fields, nested lists merge recursively, a
   matched portfolio takes the file's name and the **union** of both lists of
   buildings, unmatched entities are appended, and entities missing from the
   file are kept. Nothing is ever removed by an import, and `withPortfolios`
@@ -432,8 +489,10 @@ Amounts are plain numbers in dollars. Round only at display with
 - **Removing a building** (caption, Build mode): a building with units shows
   "Remove building" and the armed chip names its contents through
   `TwoTapChip`'s `detail`; an empty one keeps the quiet `✕ Building`.
-- **Toolbar** (under the header): Payments, Leases, Raise rents, Undo (while
-  a raise is undoable), Print / PDF, Backup. Chips are 40px tall for phones.
+- **Toolbar** (under the header): Payments, Leases, Scenarios, Compare
+  (once a scenario exists), Raise rents, Undo (while a raise is undoable),
+  Print / PDF, Backup. Payments and Leases are hidden in scenario mode.
+  Chips are 40px tall for phones.
 - **Building picker** (`BuildingPicker.jsx`, under the toolbar, hidden with
   fewer than two buildings): "All" or one building. Selection is UI state
   only (`lib/selection.js`): more than `SIDE_BY_SIDE_MAX` (3) buildings
@@ -483,6 +542,31 @@ Amounts are plain numbers in dollars. Round only at display with
   (`tone="amber"`) beside the title with `leaseSummary(inPortfolio).within90`
   — leases ending today through 90 days out — that opens the Leases view.
   At zero there is no chip at all.
+- **Scenario mode** (`scenarioId` state in `App.jsx`, never stored; a
+  reload is always real data): the sheet, the building picker, the title
+  block, the raise-rents sheet, and the print view show the scenario's
+  copy, and every `write` aims at it. It is unmistakable: a sticky
+  `ScenarioBanner` under the header names the scenario (rename in place),
+  says it is a snapshot of the portfolio from its date that never touches
+  real data, and holds Compare / Scenarios / **Exit scenario**; the root
+  gets `data-mode="scenario"` and `SCENARIO_ACCENT`, which overrides
+  `--color-line` and `--color-ink` to violet so the grid, every border,
+  and every sheet read as not-reality. Hidden in scenario mode: the
+  Payments and Leases chips and the lease chip, the panel's Payments /
+  List / Updates tabs and its tenant and lease fields (`scenario` prop),
+  and every photo control (`photos={false}` through `Elevation` to
+  `BuildingCaption`; `setPhoto` refuses too). Switching portfolio, adding
+  or removing one, and a scenario disappearing all exit scenario mode.
+  The raise undo record carries its target and is dropped on a mode
+  switch.
+- **Scenarios sheet** (`ScenariosSheet.jsx`, the "◈ Scenarios" chip): what
+  a scenario is, "+ Fork from actual" with a name (disabled at the cap,
+  with the reason), then the active portfolio's scenarios with Open /
+  rename in place / a two-tap ✕ whose detail names what goes.
+- **Compare view** (`CompareView.jsx`, the "⇔ Compare" chip and the banner):
+  the `compareTable` as a table, Actual first, the row labels pinned
+  (`sticky left-0`) so the columns scroll sideways at 380px, each scenario
+  cell with its delta under it in amber or alert.
 - **Payment marker** (`PaymentMark` in `UnitBox.jsx`): a small alert-toned
   tag in the box's control row when the CURRENT local month is explicitly
   unpaid or late — "late", "unpaid", or per half ("A unpaid · B late"). An
@@ -529,7 +613,8 @@ Amounts are plain numbers in dollars. Round only at display with
   `UnitPanel.jsx` (detail panel: header fields + Payments / Bills / List /
   Updates tabs), `MonthView.jsx` (one month of payments across the
   portfolio), `LeaseView.jsx` (every lease end in the portfolio, soonest
-  first).
+  first), `ScenarioBanner.jsx`, `ScenariosSheet.jsx`, `CompareView.jsx`
+  (scenario mode's banner, list, and comparison table).
 - Unit edits flow through `updateUnit(unitId, patch)` in `App.jsx`, which
   calls `ops.patchUnit`; `patch` is a partial unit or a function
   `(unit) => partial`. Use the function form for anything that appends to or

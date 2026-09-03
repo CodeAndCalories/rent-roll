@@ -30,6 +30,14 @@ soonest first — ended, within 30 days, within 90 days, later — and puts the
 units with no end date in their own group at the bottom rather than hiding
 them. A chip beside the title counts the leases ending within 90 days.
 
+Scenarios are alternate versions of a portfolio to compare against reality:
+forking copies the real buildings whole — rents, statuses, floors, units,
+widths, splits, bills — into a snapshot that is independent from then on.
+Editing a scenario never touches real data, and real data never changes a
+scenario. The sheet turns violet with a banner while a scenario is open,
+and Compare puts Actual beside every scenario with the differences in
+colour. Photos, payments, tenants, and lease dates are never copied.
+
 There is no backend. All data lives in the browser's `localStorage`.
 
 ## Stack
