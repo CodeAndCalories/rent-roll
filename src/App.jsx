@@ -9,6 +9,8 @@ import {
   describePortfolio,
   addSideAnnex as opsAddSideAnnex,
   addUnit as opsAddUnit,
+  clearPayment as opsClearPayment,
+  cyclePayment as opsCyclePayment,
   patchProperty,
   patchUnit,
   removeFloor as opsRemoveFloor,
@@ -17,11 +19,13 @@ import {
   removeUnit as opsRemoveUnit,
   renameFloor as opsRenameFloor,
   renamePortfolio as opsRenamePortfolio,
+  setPayment as opsSetPayment,
   setUnitWidths as opsSetUnitWidths,
   sideAnnexCheck,
 } from './data/ops.js'
 import { buildFromTemplate } from './data/templates.js'
 import { computeTotals } from './data/totals.js'
+import { monthKey } from './lib/months.js'
 import { ALL, displayedProperties, resolveSelection } from './lib/selection.js'
 import {
   activePortfolio,
@@ -33,6 +37,7 @@ import {
 import Elevation from './components/Elevation.jsx'
 import TitleBlock from './components/TitleBlock.jsx'
 import UnitPanel from './components/UnitPanel.jsx'
+import MonthView from './components/MonthView.jsx'
 import RaiseRentsSheet, { applyChanges, describeRaise } from './components/RaiseRents.jsx'
 import BackupSheet, { describeReport } from './components/Backup.jsx'
 import PrintView from './components/PrintView.jsx'
@@ -50,8 +55,10 @@ export default function App() {
   const [state, setState] = useState(loaded.state)
   const [saveError, setSaveError] = useState(null)
   const [openUnitId, setOpenUnitId] = useState(null)
+  const [panelTab, setPanelTab] = useState('payments') // which tab the panel opens on
   const [notice, setNotice] = useState(null)
-  const [dialog, setDialog] = useState(null) // 'raise' | 'backup' | 'template' | null
+  const [dialog, setDialog] = useState(null) // 'raise' | 'backup' | 'template' | 'month' | null
+  const [month, setMonth] = useState(() => monthKey()) // the month view's month, local
   const [printing, setPrinting] = useState(false)
   const [undo, setUndo] = useState(null) // { changes, label } from the last raise
   const [selected, setSelected] = useState(null) // building id | 'all' | null (= default)
@@ -69,6 +76,9 @@ export default function App() {
   // sheet over a store that still holds units unless it is told the emptying
   // was deliberate; this is how it is told, for one write only.
   const emptyingOnPurpose = useRef(false)
+  // The dialog to bring back when the unit panel closes: the month view
+  // opens a unit's panel in its place and returns to the same month after.
+  const returnTo = useRef(null)
 
   // Persist the whole state on every change. save() refuses unsafe writes
   // and reports failures (e.g. quota) instead of throwing. There is no save
@@ -111,6 +121,21 @@ export default function App() {
 
   const updateProperty = useCallback(
     (propertyId, patch) => guarded((s) => patchProperty(s, propertyId, patch)),
+    [guarded],
+  )
+
+  /**
+   * Payment records. These three are the only writers of unit.payments:
+   * each is one explicit tap or edit on one month of one rental. Nothing
+   * else in the app — not a rent change, a raise, a split, an import, a new
+   * month — creates or changes a record.
+   */
+  const payments = useMemo(
+    () => ({
+      set: (unitId, m, half, patch) => guarded((s) => opsSetPayment(s, unitId, m, half, patch)),
+      clear: (unitId, m, half) => guarded((s) => opsClearPayment(s, unitId, m, half)),
+      cycle: (unitId, m, half) => guarded((s) => opsCyclePayment(s, unitId, m, half)),
+    }),
     [guarded],
   )
 
@@ -255,7 +280,27 @@ export default function App() {
     setNotice({ tone: 'line', text: `Imported: ${describeReport(report)}.` })
   }, [])
 
-  const closePanel = useCallback(() => setOpenUnitId(null), [])
+  /** A box tap: the panel on its usual first tab. */
+  const openUnitPanel = useCallback((unitId) => {
+    setPanelTab('payments')
+    setOpenUnitId(unitId)
+  }, [])
+
+  /** A row tap in the month view: the panel on Payments, and back to the month after. */
+  const openUnitFromMonth = useCallback((unitId) => {
+    returnTo.current = 'month'
+    setDialog(null)
+    setPanelTab('payments')
+    setOpenUnitId(unitId)
+  }, [])
+
+  const closePanel = useCallback(() => {
+    setOpenUnitId(null)
+    if (returnTo.current) {
+      setDialog(returnTo.current)
+      returnTo.current = null
+    }
+  }, [])
   const closeDialog = useCallback(() => setDialog(null), [])
   const stopPrinting = useCallback(() => setPrinting(false), [])
   const openTemplatePicker = useCallback(() => setDialog('template'), [])
@@ -307,6 +352,7 @@ export default function App() {
         onRaise={() => setDialog('raise')}
         onUndo={undo ? undoRaise : null}
         undoLabel={undo?.label}
+        onPayments={() => setDialog('month')}
         onPrint={() => setPrinting(true)}
         onBackup={() => setDialog('backup')}
       />
@@ -320,7 +366,7 @@ export default function App() {
           properties={displayed}
           onUnitChange={updateUnit}
           onPropertyChange={updateProperty}
-          onOpenUnit={setOpenUnitId}
+          onOpenUnit={openUnitPanel}
           onAddProperty={openTemplatePicker}
           onRemoveProperty={removeProperty}
           onSetPhoto={setPhoto}
@@ -336,12 +382,26 @@ export default function App() {
         <UnitPanel
           key={openUnit.id}
           unit={openUnit}
+          initialTab={panelTab}
           context={{ sideAnnex: sideAnnexCheck(state, openUnit.id) }}
           onChange={(patch) => updateUnit(openUnit.id, patch)}
+          onPayment={(m, half, patch) => payments.set(openUnit.id, m, half, patch)}
+          onUntrack={(m, half) => payments.clear(openUnit.id, m, half)}
           onClose={closePanel}
         />
       )}
 
+      {dialog === 'month' && (
+        <MonthView
+          properties={inPortfolio}
+          portfolioName={portfolioName}
+          month={month}
+          onMonth={setMonth}
+          onCycle={payments.cycle}
+          onOpenUnit={openUnitFromMonth}
+          onClose={closeDialog}
+        />
+      )}
       {dialog === 'template' && <TemplatePicker onCreate={createProperty} onClose={closeDialog} />}
       {dialog === 'raise' && (
         <RaiseRentsSheet properties={inPortfolio} onApply={applyRaise} onClose={closeDialog} />
@@ -377,10 +437,14 @@ function SheetHeader({ warnings, collected, portfolioName, savedAt, saveError })
 }
 
 /** Sheet-level tools. 40px tall chips so they are easy to hit on a phone. */
-function Tools({ onRaise, onUndo, undoLabel, onPrint, onBackup }) {
+function Tools({ onRaise, onUndo, undoLabel, onPayments, onPrint, onBackup }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5 border-b border-line/40 px-4 py-2 sm:px-8">
-      {/* short labels on a phone so four chips stay on one line at 380px */}
+      {/* short labels on a phone so the chips stay on one line at 380px */}
+      <Chip onClick={onPayments} title="Who has paid this month, across the portfolio">
+        $ <span className="sm:hidden">Paid</span>
+        <span className="hidden sm:inline">Payments</span>
+      </Chip>
       <Chip onClick={onRaise} title="Model a rent increase across leased units">
         ↑ <span className="sm:hidden">Rents</span>
         <span className="hidden sm:inline">Raise rents</span>

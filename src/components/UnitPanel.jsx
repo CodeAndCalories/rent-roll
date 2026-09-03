@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   CADENCES,
+  PAYMENT_STATUSES,
   SIDES,
   STATUSES,
   formatDollars,
@@ -9,7 +10,10 @@ import {
   makeTask,
   toAmount,
 } from '../data/schema.js'
+import { OWED_STATUSES, defaultAmountFor, halvesFor, paymentFor } from '../data/payments.js'
+import { lastMonths, monthKey, monthLabel } from '../lib/months.js'
 import { billMonthly } from './TitleBlock.jsx'
+import { STATUS_TONE } from './MonthView.jsx'
 import { RentInput } from './UnitBox.jsx'
 import { Chip, keepFocusedFieldVisible } from './controls.jsx'
 
@@ -20,12 +24,15 @@ import { Chip, keepFocusedFieldVisible } from './controls.jsx'
 // saves the whole state, so everything here persists on reload.
 
 const TABS = [
+  { id: 'payments', label: 'Payments' },
   { id: 'bills', label: 'Bills' },
   { id: 'list', label: 'List' },
   { id: 'updates', label: 'Updates' },
 ]
 
 const RENEW_WINDOW_DAYS = 60
+/** How many months the Payments tab shows, newest first. */
+const PAYMENT_WINDOW = 12
 
 /**
  * Unit detail panel. Bottom sheet on phones, right-hand drawer from `sm` up.
@@ -33,12 +40,23 @@ const RENEW_WINDOW_DAYS = 60
  * props
  *   unit        the Unit record (always the latest from state)
  *   onChange    (patch | (unit) => patch) => void
+ *   onPayment   (month, half, patch) => void   ops.setPayment behind it
+ *   onUntrack   (month, half) => void          ops.clearPayment behind it
  *   onClose     () => void
- *   initialTab  'bills' | 'list' | 'updates'
+ *   initialTab  'payments' | 'bills' | 'list' | 'updates'
  *   context     { sideAnnex: { ok, reason } } from ops.sideAnnexCheck
  */
-export default function UnitPanel({ unit, onChange, onClose, initialTab = 'bills', context = {} }) {
+export default function UnitPanel({
+  unit,
+  onChange,
+  onPayment,
+  onUntrack,
+  onClose,
+  initialTab = 'payments',
+  context = {},
+}) {
   const [tab, setTab] = useState(initialTab)
+  const months = lastMonths(PAYMENT_WINDOW, monthKey())
 
   // Escape closes; the page behind the sheet stops scrolling while open.
   useEffect(() => {
@@ -55,6 +73,13 @@ export default function UnitPanel({ unit, onChange, onClose, initialTab = 'bills
   }, [onClose])
 
   const counts = {
+    // months in the window explicitly unpaid or late (untracked never counts)
+    payments: months.reduce(
+      (n, m) =>
+        n +
+        halvesFor(unit, m).filter((h) => OWED_STATUSES.includes(paymentFor(unit, m, h)?.status)).length,
+      0,
+    ),
     bills: unit.bills.length,
     list: unit.tasks.filter((t) => !t.done).length,
     updates: unit.notes.length,
@@ -102,6 +127,9 @@ export default function UnitPanel({ unit, onChange, onClose, initialTab = 'bills
           onFocus={keepFocusedFieldVisible}
           className="flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] sm:px-5"
         >
+          {tab === 'payments' && (
+            <PaymentsTab unit={unit} months={months} onPayment={onPayment} onUntrack={onUntrack} />
+          )}
           {tab === 'bills' && <BillsTab unit={unit} onChange={onChange} />}
           {tab === 'list' && <ListTab unit={unit} onChange={onChange} />}
           {tab === 'updates' && <UpdatesTab unit={unit} onChange={onChange} />}
@@ -342,6 +370,140 @@ function daysUntil(ymd, today) {
   if (Number.isNaN(target.getTime())) return null
   const base = new Date(today.getFullYear(), today.getMonth(), today.getDate())
   return Math.round((target - base) / 86400000)
+}
+
+// ---------------------------------------------------------------------------
+// PAYMENTS
+// ---------------------------------------------------------------------------
+
+/**
+ * The last PAYMENT_WINDOW months, newest first, one row per rental (the
+ * unit, or half A and half B while split — and a half that has a record
+ * for that month, so history from before an unsplit stays in view). A
+ * month with no record is grey with a dash: untracked, not unpaid. Picking
+ * a status creates the record, at the rent of that moment; every field of
+ * an existing record edits in place, any month, no warning. The only way
+ * back to untracked is the two-tap ✕, and it never fires by accident.
+ */
+function PaymentsTab({ unit, months, onPayment, onUntrack }) {
+  return (
+    <div className="pt-3">
+      <p className="text-[10px] leading-relaxed text-line/60">
+        Last {months.length} months. A month you never marked stays grey — untracked, not unpaid. Pick a
+        status to start tracking it; any month can be edited.
+      </p>
+      <div className="mt-2 divide-y divide-line/20">
+        {months.map((m) => (
+          <MonthBlock key={m} unit={unit} month={m} onPayment={onPayment} onUntrack={onUntrack} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function MonthBlock({ unit, month, onPayment, onUntrack }) {
+  const halves = halvesFor(unit, month)
+  return (
+    <div className="space-y-2 py-2">
+      {halves.map((half) => (
+        <PaymentRow
+          key={half}
+          unit={unit}
+          month={month}
+          half={half}
+          showHalf={halves.length > 1}
+          onPayment={onPayment}
+          onUntrack={onUntrack}
+        />
+      ))}
+    </div>
+  )
+}
+
+function PaymentRow({ unit, month, half, showHalf, onPayment, onUntrack }) {
+  const record = paymentFor(unit, month, half)
+  const due = defaultAmountFor(unit, half)
+  const label = showHalf ? `${monthLabel(month)} · ${half}` : monthLabel(month)
+  const patch = (fields) => onPayment(month, half, fields)
+
+  if (!record) {
+    return (
+      <div className="flex items-center gap-2">
+        <span className="w-16 shrink-0 text-[10px] leading-tight tracking-[0.12em] text-line/40 uppercase">
+          {label}
+        </span>
+        <PaymentStatusSelect value={null} onChange={(status) => patch({ status })} label={label} />
+        <span className="ml-auto text-sm text-line/40" title="Untracked">
+          —
+        </span>
+        <span className="w-20 shrink-0 text-right text-[9px] text-line/40 tabular-nums" title="Rent right now">
+          {due > 0 ? formatDollars(due) : ''}
+        </span>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <span className="w-16 shrink-0 text-[10px] leading-tight tracking-[0.12em] text-ink uppercase">{label}</span>
+        <PaymentStatusSelect value={record.status} onChange={(status) => patch({ status })} label={label} />
+        <div className="ml-auto w-20">
+          <RentInput value={record.amount} onCommit={(amount) => patch({ amount })} ariaLabel={`${label} amount`} />
+        </div>
+        <DeleteButton
+          onConfirm={() => onUntrack(month, half)}
+          what="record"
+          label={`Untrack ${label}`}
+          confirmLabel="Untrack?"
+        />
+      </div>
+      <div className="mt-1.5 flex items-center gap-2 pl-[4.5rem]">
+        <DateInput
+          value={record.paidOn}
+          onChange={(paidOn) => patch({ paidOn })}
+          ariaLabel={`${label} paid on`}
+          className="w-36 shrink-0"
+        />
+        <TextInput
+          value={record.note}
+          onChange={(note) => patch({ note })}
+          placeholder="Note"
+          aria-label={`${label} note`}
+          className="min-w-0 flex-1"
+        />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The status picker. An untracked month offers "—" plus the five statuses;
+ * a tracked one offers only the statuses, so the select can never clear a
+ * record by itself (the ✕ does that, in two taps).
+ */
+function PaymentStatusSelect({ value, onChange, label }) {
+  const untracked = value == null
+  return (
+    <select
+      value={untracked ? '' : value}
+      onChange={(e) => {
+        if (e.target.value) onChange(e.target.value)
+      }}
+      aria-label={`${label} status`}
+      className={cx(
+        'min-h-11 border bg-sheet px-1.5 py-1.5 text-base tracking-widest uppercase sm:min-h-9 sm:text-[10px]',
+        STATUS_TONE[untracked ? 'untracked' : value] ?? STATUS_TONE.untracked,
+      )}
+    >
+      {untracked && <option value="">—</option>}
+      {PAYMENT_STATUSES.map((s) => (
+        <option key={s} value={s}>
+          {s}
+        </option>
+      ))}
+    </select>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -595,14 +757,17 @@ function TextInput({ value, onChange, className, ...rest }) {
   )
 }
 
-function DateInput({ value, onChange, ariaLabel }) {
+function DateInput({ value, onChange, ariaLabel, className = 'w-full' }) {
   return (
     <input
       type="date"
       value={value ?? ''}
       onChange={(e) => onChange(e.target.value || null)}
       aria-label={ariaLabel}
-      className="w-full min-w-0 border-b border-line/50 bg-transparent py-1 text-base text-ink [color-scheme:dark] outline-none focus:border-amber"
+      className={cx(
+        'min-w-0 border-b border-line/50 bg-transparent py-1 text-base text-ink [color-scheme:dark] outline-none focus:border-amber',
+        className,
+      )}
     />
   )
 }
@@ -663,7 +828,7 @@ function NumberField({ value, onCommit, min, max, ariaLabel, className }) {
 }
 
 /** Two-tap delete: first tap arms it, second confirms; disarms after 3s. */
-function DeleteButton({ onConfirm, what }) {
+function DeleteButton({ onConfirm, what, label, confirmLabel = 'Delete?' }) {
   const [armed, setArmed] = useState(false)
 
   useEffect(() => {
@@ -679,7 +844,7 @@ function DeleteButton({ onConfirm, what }) {
         onClick={onConfirm}
         className="min-h-11 shrink-0 border border-alert px-2 py-1 text-[9px] tracking-widest text-alert uppercase"
       >
-        Delete?
+        {confirmLabel}
       </button>
     )
   }
@@ -687,8 +852,8 @@ function DeleteButton({ onConfirm, what }) {
     <button
       type="button"
       onClick={() => setArmed(true)}
-      aria-label={`Delete ${what}`}
-      title={`Delete ${what}`}
+      aria-label={label ?? `Delete ${what}`}
+      title={label ?? `Delete ${what}`}
       className="flex h-11 w-11 shrink-0 items-center justify-center text-line/60 hover:text-alert"
     >
       ✕
