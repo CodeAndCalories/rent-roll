@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from 'react'
 
 /**
  * Compact uppercase chip button. `as="label"` makes it wrap a hidden input.
- * `active` fills it amber; `tone="alert"` outlines it in the alert colour.
+ * `active` fills it amber; `tone="alert"` outlines it in the alert colour,
+ * `tone="amber"` in amber (a count worth a look, not an alarm).
  *
  * `size`:
  *   'tap'      44px on a phone, 36px from sm up. The default: anything a
@@ -32,7 +33,9 @@ export function Chip({
     ? 'border-amber bg-amber text-sheet'
     : tone === 'alert'
       ? 'border-alert/60 text-alert hover:bg-alert/10'
-      : 'border-line/40 text-line hover:border-amber hover:text-amber'
+      : tone === 'amber'
+        ? 'border-amber/60 text-amber hover:bg-amber/10'
+        : 'border-line/40 text-line hover:border-amber hover:text-amber'
   const extra = Tag === 'button' ? { type: 'button' } : {}
   return (
     <Tag

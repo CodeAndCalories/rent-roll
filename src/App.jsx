@@ -25,6 +25,7 @@ import {
 } from './data/ops.js'
 import { buildFromTemplate } from './data/templates.js'
 import { computeTotals } from './data/totals.js'
+import { leaseSummary } from './lib/leases.js'
 import { monthKey } from './lib/months.js'
 import { ALL, displayedProperties, resolveSelection } from './lib/selection.js'
 import {
@@ -38,6 +39,7 @@ import Elevation from './components/Elevation.jsx'
 import TitleBlock from './components/TitleBlock.jsx'
 import UnitPanel from './components/UnitPanel.jsx'
 import MonthView from './components/MonthView.jsx'
+import LeaseView from './components/LeaseView.jsx'
 import RaiseRentsSheet, { applyChanges, describeRaise } from './components/RaiseRents.jsx'
 import BackupSheet, { describeReport } from './components/Backup.jsx'
 import PrintView from './components/PrintView.jsx'
@@ -57,7 +59,7 @@ export default function App() {
   const [openUnitId, setOpenUnitId] = useState(null)
   const [panelTab, setPanelTab] = useState('payments') // which tab the panel opens on
   const [notice, setNotice] = useState(null)
-  const [dialog, setDialog] = useState(null) // 'raise' | 'backup' | 'template' | 'month' | null
+  const [dialog, setDialog] = useState(null) // 'raise' | 'backup' | 'template' | 'month' | 'leases' | null
   const [month, setMonth] = useState(() => monthKey()) // the month view's month, local
   const [printing, setPrinting] = useState(false)
   const [undo, setUndo] = useState(null) // { changes, label } from the last raise
@@ -76,8 +78,8 @@ export default function App() {
   // sheet over a store that still holds units unless it is told the emptying
   // was deliberate; this is how it is told, for one write only.
   const emptyingOnPurpose = useRef(false)
-  // The dialog to bring back when the unit panel closes: the month view
-  // opens a unit's panel in its place and returns to the same month after.
+  // The dialog to bring back when the unit panel closes: the month and
+  // lease views open a unit's panel in their place and come back after.
   const returnTo = useRef(null)
 
   // Persist the whole state on every change. save() refuses unsafe writes
@@ -286,13 +288,16 @@ export default function App() {
     setOpenUnitId(unitId)
   }, [])
 
-  /** A row tap in the month view: the panel on Payments, and back to the month after. */
-  const openUnitFromMonth = useCallback((unitId) => {
-    returnTo.current = 'month'
+  /** A row tap in a portfolio view (month, leases): the panel, and back to that view after. */
+  const openUnitFromView = useCallback((unitId, view) => {
+    returnTo.current = view
     setDialog(null)
     setPanelTab('payments')
     setOpenUnitId(unitId)
   }, [])
+  const openUnitFromMonth = useCallback((unitId) => openUnitFromView(unitId, 'month'), [openUnitFromView])
+  const openUnitFromLeases = useCallback((unitId) => openUnitFromView(unitId, 'leases'), [openUnitFromView])
+  const openLeases = useCallback(() => setDialog('leases'), [])
 
   const closePanel = useCallback(() => {
     setOpenUnitId(null)
@@ -312,6 +317,7 @@ export default function App() {
   const portfolioName = portfolio?.name || 'Portfolio'
   const inPortfolio = propertiesOf(state, activeId)
   const totals = computeTotals(inPortfolio)
+  const leases = leaseSummary(inPortfolio) // the header chip's count; hidden at zero
   const selection = resolveSelection(inPortfolio, selected)
   const displayed = displayedProperties(inPortfolio, selection)
   const showing = selection === ALL ? null : displayed[0]?.name || 'Building'
@@ -334,6 +340,8 @@ export default function App() {
         portfolioName={portfolioName}
         savedAt={savedAt}
         saveError={saveError}
+        leasesWithin90={leases.within90}
+        onLeases={openLeases}
       />
       <UpdatePrompt />
       <PortfolioBar
@@ -353,6 +361,7 @@ export default function App() {
         onUndo={undo ? undoRaise : null}
         undoLabel={undo?.label}
         onPayments={() => setDialog('month')}
+        onLeases={openLeases}
         onPrint={() => setPrinting(true)}
         onBackup={() => setDialog('backup')}
       />
@@ -402,6 +411,14 @@ export default function App() {
           onClose={closeDialog}
         />
       )}
+      {dialog === 'leases' && (
+        <LeaseView
+          properties={inPortfolio}
+          portfolioName={portfolioName}
+          onOpenUnit={openUnitFromLeases}
+          onClose={closeDialog}
+        />
+      )}
       {dialog === 'template' && <TemplatePicker onCreate={createProperty} onClose={closeDialog} />}
       {dialog === 'raise' && (
         <RaiseRentsSheet properties={inPortfolio} onApply={applyRaise} onClose={closeDialog} />
@@ -413,12 +430,29 @@ export default function App() {
   )
 }
 
-function SheetHeader({ warnings, collected, portfolioName, savedAt, saveError }) {
+/**
+ * The header. `leasesWithin90` puts an amber chip beside the title — the
+ * count of leases ending today through 90 days out — that opens the Leases
+ * view; at zero there is no chip at all.
+ */
+function SheetHeader({ warnings, collected, portfolioName, savedAt, saveError, leasesWithin90 = 0, onLeases }) {
   return (
     <header className="border-b border-line/40 pt-[env(safe-area-inset-top)]">
-      <div className="flex items-baseline justify-between gap-3 px-4 py-3 sm:px-8">
+      <div className="flex items-center justify-between gap-3 px-4 py-2 sm:px-8 sm:py-3">
         <h1 className="font-display shrink-0 text-base tracking-[0.3em] text-ink uppercase">Rent Roll</h1>
         <SaveState savedAt={savedAt} error={saveError} />
+        {leasesWithin90 > 0 && (
+          <Chip
+            tone="amber"
+            onClick={onLeases}
+            title={`${leasesWithin90} ${leasesWithin90 === 1 ? 'lease ends' : 'leases end'} within 90 days · open the Leases view`}
+            className="shrink-0"
+          >
+            ◷ {leasesWithin90}
+            <span className="hidden sm:inline">{leasesWithin90 === 1 ? 'lease' : 'leases'} within 90d</span>
+            <span className="sm:hidden">≤ 90d</span>
+          </Chip>
+        )}
         {/* live readout for the portfolio on screen; stays above a phone keyboard */}
         <div className="ml-auto truncate text-[10px] tracking-[0.2em] text-line/70 uppercase">
           <span className="hidden sm:inline">{portfolioName} </span>
@@ -437,13 +471,16 @@ function SheetHeader({ warnings, collected, portfolioName, savedAt, saveError })
 }
 
 /** Sheet-level tools. 40px tall chips so they are easy to hit on a phone. */
-function Tools({ onRaise, onUndo, undoLabel, onPayments, onPrint, onBackup }) {
+function Tools({ onRaise, onUndo, undoLabel, onPayments, onLeases, onPrint, onBackup }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5 border-b border-line/40 px-4 py-2 sm:px-8">
       {/* short labels on a phone so the chips stay on one line at 380px */}
       <Chip onClick={onPayments} title="Who has paid this month, across the portfolio">
         $ <span className="sm:hidden">Paid</span>
         <span className="hidden sm:inline">Payments</span>
+      </Chip>
+      <Chip onClick={onLeases} title="Every lease end date in the portfolio, soonest first">
+        ◷ Leases
       </Chip>
       <Chip onClick={onRaise} title="Model a rent increase across leased units">
         ↑ <span className="sm:hidden">Rents</span>

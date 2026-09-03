@@ -11,6 +11,7 @@ import {
   toAmount,
 } from '../data/schema.js'
 import { OWED_STATUSES, defaultAmountFor, halvesFor, paymentFor } from '../data/payments.js'
+import { leaseFlag } from '../lib/leases.js'
 import { lastMonths, monthKey, monthLabel } from '../lib/months.js'
 import { billMonthly } from './TitleBlock.jsx'
 import { STATUS_TONE } from './MonthView.jsx'
@@ -30,7 +31,6 @@ const TABS = [
   { id: 'updates', label: 'Updates' },
 ]
 
-const RENEW_WINDOW_DAYS = 60
 /** How many months the Payments tab shows, newest first. */
 const PAYMENT_WINDOW = 12
 
@@ -348,29 +348,9 @@ function StatusPicker({ value, onChange }) {
   )
 }
 
-/**
- * Lease-end flag. Within RENEW_WINDOW_DAYS (inclusive) -> amber "renews soon".
- * Already past -> alert "ended". Otherwise null.
- */
-export function leaseFlag(leaseEnd, today = new Date()) {
-  const days = daysUntil(leaseEnd, today)
-  if (days == null) return null
-  if (days < 0) return { tone: 'alert', text: `ended ${-days}d ago` }
-  if (days <= RENEW_WINDOW_DAYS) {
-    return { tone: 'amber', text: days === 0 ? 'renews today' : `renews soon · ${days}d` }
-  }
-  return null
-}
-
-function daysUntil(ymd, today) {
-  if (typeof ymd !== 'string') return null
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd)
-  if (!m) return null
-  const target = new Date(+m[1], +m[2] - 1, +m[3])
-  if (Number.isNaN(target.getTime())) return null
-  const base = new Date(today.getFullYear(), today.getMonth(), today.getDate())
-  return Math.round((target - base) / 86400000)
-}
+// The lease-end flag ("renews soon" / "ended") and the local-midnight day
+// math behind it live in lib/leases.js, shared with the Leases view.
+export { leaseFlag }
 
 // ---------------------------------------------------------------------------
 // PAYMENTS
