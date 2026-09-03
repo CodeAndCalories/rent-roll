@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { formatDollars, toAmount } from '../data/schema.js'
 import { isEmptyUnit } from '../data/ops.js'
+import { paymentMarker } from '../data/payments.js'
+import { monthKey } from '../lib/months.js'
 import { InlineLabel, TwoTapChip } from './controls.jsx'
 import { rentPerRental } from './TitleBlock.jsx'
 
@@ -25,6 +27,7 @@ const NEXT_STATUS = { leased: 'vacant', vacant: 'renovating', renovating: 'lease
  *   readOnly   print view: text instead of inputs, no controls
  *   build      Build is on for this building: rename in place, remove if empty
  *   onRemove   () => void              build mode: drop this (empty) unit
+ *   month      'YYYY-MM' the marker is about; the current local month by default
  */
 export default function UnitBox({
   unit,
@@ -37,6 +40,7 @@ export default function UnitBox({
   readOnly = false,
   build = false,
   onRemove,
+  month,
 }) {
   const vacant = unit.status === 'vacant'
   const renovating = unit.status === 'renovating'
@@ -44,6 +48,8 @@ export default function UnitBox({
   const label = unit.name || 'Unit'
   const building = build && !readOnly
   const removable = building && Boolean(onRemove) && isEmptyUnit(unit)
+  // only a month explicitly marked unpaid or late; an untracked month is silent
+  const marker = paymentMarker(unit, month ?? monthKey())
 
   // Tapping anywhere on the box opens the detail panel, except on its own
   // controls (rent input, status dot, split, flip), which keep their jobs.
@@ -110,6 +116,7 @@ export default function UnitBox({
         )}
 
         <div className="flex shrink-0 items-center gap-1">
+          {marker && <PaymentMark text={marker} />}
           {removable && (
             <TwoTapChip
               onConfirm={onRemove}
@@ -204,6 +211,25 @@ export function StatusDot({ status, onClick }) {
         )}
       />
     </button>
+  )
+}
+
+/**
+ * The small marker on a box whose current month is explicitly unpaid or
+ * late: 'late', 'unpaid', or per half when split. Never shown for a month
+ * nobody tracked. A plain span, so tapping it opens the panel like the
+ * rest of the box; it costs the figure no width.
+ */
+export function PaymentMark({ text }) {
+  return (
+    <span
+      role="img"
+      aria-label={`This month: ${text}`}
+      title={`This month: ${text}`}
+      className="border border-alert/70 bg-alert/10 px-1 text-[8px] leading-4 tracking-[0.12em] whitespace-nowrap text-alert uppercase"
+    >
+      {text}
+    </span>
   )
 }
 
