@@ -17,6 +17,7 @@ const ENTITY_LABELS = [
   ['bills', 'bills'],
   ['tasks', 'list items'],
   ['notes', 'notes'],
+  ['payments', 'payment records'],
 ]
 
 export function describeReport(report) {
