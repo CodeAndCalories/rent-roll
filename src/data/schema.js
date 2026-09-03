@@ -6,8 +6,11 @@
 //
 // Data model (recorded verbatim in CLAUDE.md):
 //
-//   State     { version, updatedAt, portfolios[], properties[] }
+//   State     { version, updatedAt, portfolios[], properties[], scenarios[] }
 //   Portfolio { id, name, propertyIds[] }   // which buildings it holds
+//   Scenario  { id, portfolioId, name, note, createdAt, properties[] }
+//              a whole COPY of one portfolio's buildings from the moment it
+//              was made, with fresh ids — never an overlay, never a pointer
 //   Property  { id, name, address, shape, photo, photoSize, view, floors[], bills[] }
 //     shape: 'gable' | 'flat' | 'mansard' | 'custom'
 //     photo: null or a data-URL string (resized to <= 1200px wide before storing)
@@ -52,6 +55,12 @@
 // `splitRent` is the second half's rent. When not split, `rent` is the whole
 // unit and `splitRent` is ignored (but kept).
 //
+// Scenarios: a scenario's `properties` are Property objects like any other,
+// but they are a projection, not a record. stripForScenario keeps them free
+// of everything factual — photos, payment records, tenant names, lease
+// dates, list items, notes — on every load, not only at the fork. Actual
+// buildings stay at the top level; a scenario never points at them.
+//
 // Payments: `unit.payments` is keyed by month. The key for the unit (or its
 // first half) is the plain month, 'YYYY-MM'; the second half of a split unit
 // is 'YYYY-MM:B' (paymentKey / parsePaymentKey). A month with NO key is
@@ -81,7 +90,13 @@
 //     Additive; filled by normalizeState, no migration step. Every unit gets
 //     an empty object and nothing else is touched. A stored record is kept
 //     as it is; absent keys stay absent (untracked), they are never filled.
-export const SCHEMA_VERSION = 7
+// v8: + state.scenarios: [{ id, portfolioId, name, note, createdAt,
+//     properties }]. A scenario is a whole copy of a portfolio's buildings
+//     taken when it was made, with fresh ids and without photos, payments,
+//     tenants, lease dates, list items, or notes. Actual buildings stay
+//     exactly where they are. Additive; a store without scenarios gets [].
+//     No migration step.
+export const SCHEMA_VERSION = 8
 
 /** The portfolio every pre-v6 store's buildings are gathered into. */
 export const DEFAULT_PORTFOLIO_NAME = 'My properties'
@@ -303,15 +318,60 @@ export function makePortfolio(fields = {}) {
   }
 }
 
+/**
+ * A scenario's building with everything factual taken out: no photo, no
+ * payment records, no tenant, no lease dates, no list items, no notes.
+ * Applied at the fork and again on every load and every scenario write,
+ * so a scenario can never come to hold any of them. Idempotent.
+ */
+export function stripForScenario(property) {
+  return {
+    ...property,
+    photo: null,
+    photoSize: null,
+    view: 'drawing',
+    floors: (property.floors ?? []).map((f) => ({
+      ...f,
+      units: (f.units ?? []).map((u) => ({
+        ...u,
+        tenant: '',
+        leaseStart: null,
+        leaseEnd: null,
+        payments: {},
+        tasks: [],
+        notes: [],
+      })),
+    })),
+  }
+}
+
+export function makeScenario(fields = {}) {
+  return {
+    id: newId('scenario'),
+    portfolioId: '',
+    name: '',
+    note: '',
+    createdAt: nowISO(),
+    properties: [],
+    ...fields,
+    portfolioId: typeof fields.portfolioId === 'string' ? fields.portfolioId : '',
+    name: fields.name == null ? '' : String(fields.name),
+    note: fields.note == null ? '' : String(fields.note),
+    properties: asArray(fields.properties).map((p) => stripForScenario(makeProperty(p))),
+  }
+}
+
 export function makeState(fields = {}) {
   return withPortfolios({
     version: SCHEMA_VERSION,
     updatedAt: nowISO(),
     properties: [],
     portfolios: [],
+    scenarios: [],
     ...fields,
     properties: asArray(fields.properties).map(makeProperty),
     portfolios: asArray(fields.portfolios).map(makePortfolio),
+    scenarios: asArray(fields.scenarios).map(makeScenario),
   })
 }
 

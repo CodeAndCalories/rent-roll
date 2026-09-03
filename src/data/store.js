@@ -287,8 +287,8 @@ function defaultExportFilename(d = new Date()) {
  *
  * Merge rules:
  *   * Entities are matched by id at every level (portfolio, property,
- *     floor, unit, bill, task, note), and payment records by their month
- *     key.
+ *     floor, unit, bill, task, note, scenario and the buildings inside
+ *     it), and payment records by their month key.
  *   * Matched: the incoming scalar fields win; nested lists are merged
  *     recursively. Fields the incoming item lacks are kept from the
  *     existing one.
@@ -325,6 +325,10 @@ export async function importJSON(input, currentState) {
     report.portfolios,
   )
 
+  // scenarios merge by id too, their buildings inside them; a scenario the
+  // file does not mention is kept, like everything else
+  const scenarios = mergeById(base.state.scenarios, incoming.state.scenarios, mergeScenario, report.scenarios)
+
   // withPortfolios keeps the invariants: an imported building that no
   // portfolio in the file claimed is adopted rather than left off the sheet.
   const state = withPortfolios({
@@ -332,6 +336,7 @@ export async function importJSON(input, currentState) {
     ...incoming.state,
     properties,
     portfolios,
+    scenarios,
     version: SCHEMA_VERSION,
   })
 
@@ -376,6 +381,7 @@ function newReport() {
     tasks: tally(),
     notes: tally(),
     payments: tally(),
+    scenarios: tally(),
   }
 }
 
@@ -455,6 +461,25 @@ function mergeProperty(ex, inc, report) {
     ...inc,
     floors: mergeById(ex.floors, inc.floors, (a, b) => mergeFloor(a, b, report), report.floors),
     bills: mergeById(ex.bills, inc.bills, mergeLeaf, report.bills),
+  }
+}
+
+/**
+ * A matched scenario takes the file's name and note, and its buildings
+ * merge by id inside it. Their counts go to a scratch report so the
+ * notice's "buildings" and "units" stay about actual data.
+ */
+function mergeScenario(ex, inc) {
+  const scratch = newReport()
+  return {
+    ...ex,
+    ...inc,
+    properties: mergeById(
+      ex.properties,
+      inc.properties,
+      (a, b) => mergeProperty(a, b, scratch),
+      scratch.properties,
+    ),
   }
 }
 

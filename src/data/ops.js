@@ -18,6 +18,15 @@
 //     when it has no units.
 //   * Width weights are positive numbers, and a side annex never carries
 //     one: it has its own fixed width and is not part of a floor's split.
+//   * Every write from the app names its TARGET — actual data, or one
+//     scenario — and goes through applyTo. A scenario write is handed a
+//     view of that scenario (scenarioView) and only the view's buildings
+//     come back, into that scenario: state.properties, state.portfolios,
+//     and every other scenario are the very same objects afterwards. That
+//     is what makes a scenario write landing in actual data impossible
+//     rather than unlikely. A scenario never holds photos, payments,
+//     tenants, lease dates, list items, or notes (stripForScenario runs on
+//     every write-back), and a portfolio holds at most SCENARIO_CAP of them.
 //   * Payment records are written ONLY by setPayment / clearPayment /
 //     cyclePayment, each one explicit user action on one month of one
 //     rental. patchUnit ignores a `payments` field in its patch, so no
@@ -37,11 +46,13 @@ import {
   makePayment,
   makeUnit,
   paymentKey,
+  stripForScenario,
   toAmount,
   toWeight,
   withPortfolios,
 } from './schema.js'
 import { countPayments, defaultAmountFor, nextPaymentStatus } from './payments.js'
+import { SCENARIO_CAP, SCENARIO_CAP_REASON, countScenario, scenarioView } from './scenarios.js'
 
 export class RuleError extends Error {
   constructor(message, code) {
@@ -367,6 +378,106 @@ export function describeContents(property) {
 }
 
 // ---------------------------------------------------------------------------
+// targets — every write from the app says where it lands
+// ---------------------------------------------------------------------------
+
+/** The write target for real data. */
+export const ACTUAL = Object.freeze({ kind: 'actual' })
+
+/** The write target for one scenario. */
+export function scenarioTarget(scenarioId) {
+  return Object.freeze({ kind: 'scenario', id: scenarioId })
+}
+
+/**
+ * Run a write `fn(state) => state` against its target.
+ *
+ * ACTUAL: `fn` gets the state and its result is the new state.
+ *
+ * A scenario: `fn` gets scenarioView(state, scenario) — the scenario's
+ * buildings where actual ones would be, one throwaway portfolio, no
+ * scenarios — and NOTHING but the view's `properties` comes back, stripped
+ * of anything factual, into that scenario. `state.properties`,
+ * `state.portfolios`, and every other scenario are the very same objects
+ * afterwards. A scenario that no longer exists is refused with RuleError,
+ * never quietly written to actual. A RuleError thrown by `fn` propagates.
+ */
+export function applyTo(state, target, fn) {
+  if (!target || target.kind === 'actual') return fn(state)
+  if (target.kind !== 'scenario') throw new RuleError('Unknown write target.', 'bad-target')
+  const scenario = (state.scenarios ?? []).find((s) => s.id === target.id)
+  if (!scenario) {
+    throw new RuleError('That scenario no longer exists. Exit scenario mode and try again.', 'no-scenario')
+  }
+  const view = scenarioView(state, scenario)
+  const next = fn(view)
+  if (!next || next === view) return state
+  const properties = (Array.isArray(next.properties) ? next.properties : []).map(stripForScenario)
+  return {
+    ...state,
+    scenarios: state.scenarios.map((s) => (s.id === scenario.id ? { ...s, properties } : s)),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// scenarios — made by forkScenario (scenarios.js), added and managed here
+// ---------------------------------------------------------------------------
+
+/**
+ * Add a scenario. Refused with RuleError when its portfolio does not exist
+ * or already holds SCENARIO_CAP scenarios — the message says why there is
+ * a cap. The caller checks storage first (a trial save), so a fork is
+ * never half-written.
+ */
+export function addScenario(state, scenario) {
+  if (!scenario || typeof scenario !== 'object' || !scenario.id) return state
+  if (!(state.portfolios ?? []).some((f) => f.id === scenario.portfolioId)) {
+    throw new RuleError('That portfolio does not exist.', 'no-portfolio')
+  }
+  const held = (state.scenarios ?? []).filter((s) => s.portfolioId === scenario.portfolioId).length
+  if (held >= SCENARIO_CAP) {
+    throw new RuleError(
+      `No room for another scenario — ${SCENARIO_CAP_REASON} Delete one you are done with first.`,
+      'scenario-cap',
+    )
+  }
+  return { ...state, scenarios: [...(state.scenarios ?? []), scenario] }
+}
+
+/** Rename a scenario or change its note. Only those two fields; never its buildings. */
+export function patchScenario(state, scenarioId, patch) {
+  if (!patch || typeof patch !== 'object') return state
+  const fields = {}
+  if (patch.name !== undefined) fields.name = String(patch.name ?? '')
+  if (patch.note !== undefined) fields.note = String(patch.note ?? '')
+  if (Object.keys(fields).length === 0) return state
+  return {
+    ...state,
+    scenarios: (state.scenarios ?? []).map((s) => (s.id === scenarioId ? { ...s, ...fields } : s)),
+  }
+}
+
+/** Remove a scenario. The two-tap confirm is the UI's; an unknown id is a no-op. */
+export function removeScenario(state, scenarioId) {
+  const list = state.scenarios ?? []
+  if (!list.some((s) => s.id === scenarioId)) return state
+  return { ...state, scenarios: list.filter((s) => s.id !== scenarioId) }
+}
+
+/** What a scenario holds, for the confirm that names it. */
+export function describeScenario(state, scenarioId) {
+  const s = (state.scenarios ?? []).find((x) => x.id === scenarioId)
+  const { buildings, units } = countScenario(s)
+  const name = s?.name || 'Scenario'
+  return {
+    name,
+    buildings,
+    units,
+    text: `Deletes "${name}" — ${buildings} ${buildings === 1 ? 'building' : 'buildings'} · ${units} ${units === 1 ? 'unit' : 'units'} in it. Your real data is not affected.`,
+  }
+}
+
+// ---------------------------------------------------------------------------
 // portfolios
 // ---------------------------------------------------------------------------
 
@@ -424,12 +535,14 @@ export function describePortfolio(state, portfolioId) {
   const withRent = parts.reduce((n, d) => n + d.withRent, 0)
   const payments = parts.reduce((n, d) => n + d.payments, 0)
   const buildings = properties.length
+  const scenarios = (state.scenarios ?? []).filter((s) => s.portfolioId === portfolioId).length
 
   const bits = [
     `${buildings} ${buildings === 1 ? 'building' : 'buildings'}`,
     units && `${units} ${units === 1 ? 'unit' : 'units'}`,
     withRent && `${withRent} with rent`,
     payments && `${payments} payment ${payments === 1 ? 'record' : 'records'}`,
+    scenarios && `${scenarios} ${scenarios === 1 ? 'scenario' : 'scenarios'}`,
   ].filter(Boolean)
 
   return {
@@ -438,16 +551,21 @@ export function describePortfolio(state, portfolioId) {
     units,
     withRent,
     payments,
-    empty: buildings === 0,
+    scenarios,
+    empty: buildings === 0 && scenarios === 0,
     short: `${buildings} ${buildings === 1 ? 'building' : 'buildings'}`,
-    text: buildings === 0 ? 'It holds no buildings.' : `Takes ${bits.join(' · ')} with it.`,
+    text:
+      buildings === 0 && scenarios === 0
+        ? 'It holds no buildings.'
+        : `Takes ${bits.join(' · ')} with it.`,
   }
 }
 
 /**
  * Remove a portfolio. The last one can never go — an empty sheet still has
- * a portfolio to draw on. One that holds buildings needs { force: true },
- * and takes those buildings with it.
+ * a portfolio to draw on. One that holds buildings or scenarios needs
+ * { force: true }, and takes those buildings and every scenario of it
+ * with it (describePortfolio names how many).
  */
 export function removePortfolio(state, portfolioId, opts = {}) {
   const list = state.portfolios ?? []
@@ -456,10 +574,10 @@ export function removePortfolio(state, portfolioId, opts = {}) {
   if (list.length <= 1) {
     throw new RuleError('There is always at least one portfolio.', 'last-portfolio')
   }
-  if (f.propertyIds.length > 0 && !opts.force) {
-    const d = describePortfolio(state, portfolioId)
+  const d = describePortfolio(state, portfolioId)
+  if ((f.propertyIds.length > 0 || d.scenarios > 0) && !opts.force) {
     throw new RuleError(
-      `${f.name || 'That portfolio'} holds ${d.short}. Confirm the removal to take them with it.`,
+      `${f.name || 'That portfolio'} holds ${d.short}${d.scenarios ? ` and ${d.scenarios} ${d.scenarios === 1 ? 'scenario' : 'scenarios'}` : ''}. Confirm the removal to take them with it.`,
       'has-buildings',
     )
   }
@@ -468,6 +586,7 @@ export function removePortfolio(state, portfolioId, opts = {}) {
     ...state,
     properties: state.properties.filter((p) => !going.has(p.id)),
     portfolios: list.filter((x) => x.id !== portfolioId),
+    scenarios: (state.scenarios ?? []).filter((s) => s.portfolioId !== portfolioId),
   })
 }
 

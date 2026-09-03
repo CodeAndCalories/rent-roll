@@ -116,7 +116,7 @@ test('a pre-v6 store gathers into one default portfolio with nothing lost', () =
   assert.equal(r.source, 'storage')
   assert.equal(r.from, 5)
   assert.equal(r.state.version, SCHEMA_VERSION)
-  assert.equal(SCHEMA_VERSION, 7)
+  assert.equal(SCHEMA_VERSION, 8)
   assert.equal(r.warnings.length, 0)
 
   // one portfolio, named, holding every building that was already there

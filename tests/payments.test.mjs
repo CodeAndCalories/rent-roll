@@ -219,7 +219,7 @@ test('a v6 store migrates to v7: an empty payments object on every unit, nothing
   assert.equal(r.source, 'storage')
   assert.equal(r.from, 6)
   assert.equal(r.state.version, SCHEMA_VERSION)
-  assert.equal(SCHEMA_VERSION, 7)
+  assert.equal(SCHEMA_VERSION, 8)
   assert.equal(r.warnings.length, 0)
 
   const units = allUnits(r.state)
