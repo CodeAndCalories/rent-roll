@@ -18,6 +18,13 @@ A fresh install starts with an empty sheet; buildings are added from templates
 starting point: floors, units, names, the roof shape, and a side annex are all
 changed afterwards on the drawing with Build.
 
+Payments are tracked per unit, per month, apart from the rent a lease says
+to expect: mark a month paid, partial, late, unpaid, or waived in the unit
+panel, or in the month view on the toolbar, which shows what the month
+expected, what came in, and what is still owed across the portfolio. A
+month you never marked is untracked — grey, not unpaid — and a unit whose
+current month is late or unpaid gets a small marker on the drawing.
+
 There is no backend. All data lives in the browser's `localStorage`.
 
 ## Stack

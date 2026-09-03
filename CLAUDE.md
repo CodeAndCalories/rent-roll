@@ -38,7 +38,7 @@ Lives in `src/data/schema.js` (shapes, defaults, factories, empty seed),
 (building templates as data), and `src/data/totals.js` (totals math).
 
 ```
-State     { version, updatedAt, portfolios[], properties[] }   // version: 6
+State     { version, updatedAt, portfolios[], properties[] }   // version: 7
 Portfolio { id, name, propertyIds[] }   // the buildings it holds, by id
 Property  { id, name, address, shape, photo, photoSize, view, floors[], bills[] }
   shape: 'gable' | 'flat' | 'mansard' | 'custom'
@@ -56,8 +56,15 @@ Unit {
   splittable, isSplit, splitRent,       // for the double single
   sideOf,                               // 'left' | 'right': side a 'side' unit hangs off (default 'left')
   photoBox,                             // null or { x, y, w, h } fractions (0-1) of the photo
+  payments,                             // { [key]: Payment }; key 'YYYY-MM' or 'YYYY-MM:B'
+                                        // an absent key is UNTRACKED, which is not unpaid
   bills[], tasks[], notes[]
 }
+Payment { half, status, amount, paidOn, note }
+  half: 'A' | 'B'                       // 'A' is the unit, or its first half when split
+  status: 'unpaid' | 'partial' | 'paid' | 'late' | 'waived'
+  amount                                // starts at the rent when marked; never rewritten
+  paidOn                                // 'YYYY-MM-DD' local, or null
 Bill  { id, label, amount, cadence, dueDay, paid }   // cadence: 'monthly'|'yearly'|'once'
 Task  { id, text, done, createdAt }
 Note  { id, text, createdAt }
@@ -66,8 +73,9 @@ Note  { id, text, createdAt }
 Schema history: v1 initial; v2 added `photoSize`, `view`, `sideOf` (default
 `'right'`), `photoBox`; v3 changed the `sideOf` default to `'left'`; v4 has no
 field changes (empty seed, rules enforced in `ops.js`); v5 added
-`widthWeight` (default 1); v6 added `state.portfolios`. All additive, filled
-by `normalizeState`, no migration step needed. A stored `sideOf` or
+`widthWeight` (default 1); v6 added `state.portfolios`; v7 added
+`unit.payments` (default `{}`). All additive, filled by `normalizeState`,
+no migration step needed. A stored `sideOf` or
 `widthWeight` is always kept; the default only applies to units that have
 none. **No existing field has ever moved**: v6 buildings stay exactly where
 they were, at the top level, and a portfolio only lists ids. `npm test` runs
@@ -80,7 +88,12 @@ empty-floor guards, a rename through a save and reload), and
 `tests/portfolios.test.mjs` (a pre-v6 store gathered into one portfolio with
 nothing lost, totals following the active portfolio, the last portfolio
 staying put, a removal naming what it holds, export/import across
-portfolios).
+portfolios), and `tests/payments.test.mjs` (a v6 store migrating with
+nothing lost, untracked vs unpaid, no implicit writes on a rent change /
+rename / split / unsplit / portfolio move, split halves through an unsplit,
+a record's amount outliving a rent change, the month boundary in Los
+Angeles and Tokyo, the removal guards counting records, export/import
+round-tripping history).
 
 ### Portfolios
 
@@ -99,6 +112,60 @@ Which portfolio is active is UI state, like the building selection
 `propertiesOf`, `portfolioState`, `portfolioSummaries`). The sheet, the
 building picker, the raise-rents sheet, the print view, and **the totals**
 cover the active portfolio; **Backup covers every portfolio**.
+
+### Payments
+
+What actually came in, per unit, per month — kept apart from the rent the
+leases say to expect. `unit.payments` is keyed by month: `'YYYY-MM'` for
+the unit (or its first half), `'YYYY-MM:B'` for the second half of a split
+unit (`paymentKey` / `parsePaymentKey` in `schema.js`). The math is in
+`src/data/payments.js` and the month arithmetic in `src/lib/months.js` (no
+React in either, so the node tests import them directly).
+
+- **Untracked is not unpaid.** A month with no key is one nobody has said
+  anything about: it draws grey with a dash, adds nothing to
+  "outstanding", and never puts a marker on the drawing. A month marked
+  `'unpaid'` is a record like any other.
+- **Nothing writes a record on its own.** `setPayment`, `clearPayment`,
+  and `cyclePayment` in `ops.js` are the only writers, each one explicit
+  user action on one month of one rental. `patchUnit` drops a `payments`
+  field from any patch, so a rent change, a rename, a split or unsplit, a
+  raise, a width drag, a move between portfolios, or a month rollover can
+  never create, change, or lose one. `normalizeState` only fills the empty
+  object; no backfill, no "paid because rent is set".
+- **Amount is history.** A new record's `amount` is the rent stored for
+  that half at the moment of marking (`defaultAmountFor`) and is its own
+  from then on; a later rent change never rewrites it. An explicit amount
+  in the patch wins, and a status change keeps it.
+- **Halves.** A split unit's halves track apart (`half` `'A'` / `'B'`,
+  `rentalsOf`). Unsplitting keeps both halves' records, and a month with
+  B history keeps showing its B row (`halvesFor`) while nothing more is
+  expected from B (`expectedFor`).
+- **Months are local.** `monthKey()` / `dayKey()` read the local calendar,
+  never `toISOString`, so a payment marked at 00:30 on the 1st is in the
+  new month and one marked late on the 31st is not in the next. Stored as
+  plain strings; no Date goes into storage.
+- **Month math** (`rentalMonth`, `monthSummary`): expected is the record's
+  amount, or the lease's rent when untracked (a partial is due at least the
+  lease rent); collected is paid + partial amounts; outstanding is unpaid +
+  late amounts plus the rest of a partial; waived is neither. `tracked` /
+  `untracked` count rows. **None of this touches `computeTotals`**: the
+  title block stays rent from leases.
+- **The tap cycle** (`PAYMENT_CYCLE`): untracked → paid → partial → late →
+  unpaid → waived → untracked again for a record nothing was typed into
+  (`isBarePayment`: no note, no date, the amount it started with), else
+  round to paid. A tap never drops anything typed.
+- **Removal guards** count records: `isEmptyUnit` is false while a unit
+  holds any, `removeUnit`'s message names what the unit holds
+  (`unitHoldings`, e.g. "has rent and 3 payment records"), and
+  `describeContents` / `describePortfolio` say "N payment records".
+- **Import** merges records by key (`mergePayments` in `store.js`): a
+  matched month takes the file's fields, a new month is added, a month only
+  this sheet knows is kept. Never removed. The report has a `payments`
+  tally.
+- `moveProperty(state, propertyId, portfolioId)` moves a building between
+  portfolios by id only — the building and its records are the same
+  objects after. Data op only; no UI for it yet.
 
 ### Rules enforced in the data layer (`ops.js`)
 
@@ -123,8 +190,8 @@ cover the active portfolio; **Backup covers every portfolio**.
   the contents. Either way the id leaves its portfolio. The last building
   may be removed; an empty sheet is a valid store.
 - **`describeContents(property)`** counts what a building holds (units, how
-  many with rent, tenants, bills, list items, notes) and writes the line the
-  confirm shows. Building bills at 0 are not counted: every template starts
+  many with rent, tenants, bills, list items, notes, payment records) and
+  writes the line the confirm shows. Building bills at 0 are not counted: every template starts
   with four of them.
 - **Portfolios**: `addPortfolio` (the caller makes it with `makePortfolio`,
   so it knows the id), `renamePortfolio`, `removePortfolio`. The last
@@ -132,7 +199,8 @@ cover the active portfolio; **Backup covers every portfolio**.
   `{ force: true }` and takes its buildings with it.
   `describePortfolio(state, id)` writes that confirm's line.
 - **Removing a unit** is refused unless `isEmptyUnit()` (no rent, no second
-  rent, no tenant, no bills, list items, or notes). **Removing a floor** is
+  rent, no tenant, no bills, list items, notes, or payment records); the
+  message names what the unit holds. **Removing a floor** is
   refused while anything is on it, the annex included. Both relayout what is
   left (one main unit → full, two → left/right).
 - **Unit widths**: `setUnitWidths(state, propertyId, floorId, weights)`
@@ -178,8 +246,9 @@ cover the active portfolio; **Backup covers every portfolio**.
   backup is first moved to `rentroll:backup:<timestamp>`) and the app starts
   fresh from seed.
 - `exportJSON()` downloads `rent-roll-YYYY-MM-DD.json` in the stored shape.
-  `importJSON()` merges by id at every level — portfolio included: matched
-  entities take the file's scalar fields, nested lists merge recursively, a
+  `importJSON()` merges by id at every level — portfolio included, and
+  payment records by their month key: matched entities take the file's
+  scalar fields, nested lists merge recursively, a
   matched portfolio takes the file's name and the **union** of both lists of
   buildings, unmatched entities are appended, and entities missing from the
   file are kept. Nothing is ever removed by an import, and `withPortfolios`
@@ -342,8 +411,8 @@ Amounts are plain numbers in dollars. Round only at display with
 - **Removing a building** (caption, Build mode): a building with units shows
   "Remove building" and the armed chip names its contents through
   `TwoTapChip`'s `detail`; an empty one keeps the quiet `✕ Building`.
-- **Toolbar** (under the header): Raise rents, Undo (while a raise is
-  undoable), Print / PDF, Backup. Chips are 40px tall for phones.
+- **Toolbar** (under the header): Payments, Raise rents, Undo (while a raise
+  is undoable), Print / PDF, Backup. Chips are 40px tall for phones.
 - **Building picker** (`BuildingPicker.jsx`, under the toolbar, hidden with
   fewer than two buildings): "All" or one building. Selection is UI state
   only (`lib/selection.js`): more than `SIDE_BY_SIDE_MAX` (3) buildings
@@ -361,6 +430,31 @@ Amounts are plain numbers in dollars. Round only at display with
   split unit); `applyChanges(state, changes, 'after' | 'before')` applies or
   undoes. The undo record lives only in App state (no data field) and undo
   skips any unit whose rent was hand-edited after the raise.
+- **Payments tab** (`UnitPanel.jsx`, first tab and the default): the last
+  12 months newest first (`PAYMENT_WINDOW`), one row per rental — the unit,
+  or half A and half B while split, plus a half with a record that month.
+  An untracked month is grey with a dash and a select whose first option
+  is "—"; picking a status creates the record at that moment's rent. A
+  tracked row edits status, amount, paid-on, and note in place, any month,
+  no warning; its select has no "—", so the only way back to untracked is
+  the two-tap ✕ ("Untrack?"). Writes go through `onPayment(month, half,
+  patch)` → `ops.setPayment` and `onUntrack(month, half)` →
+  `ops.clearPayment`, never `onChange`. The tab's badge counts months in
+  the window explicitly unpaid or late.
+- **Month view** (`MonthView.jsx`, the "$ Payments" toolbar chip): one
+  month of the active portfolio — prev / next arrows and "back to this
+  month", Expected / Collected / Outstanding, then a row per rental grouped
+  by building with the record's amount (or the lease's, greyed) and a 44px
+  status cell. Tapping the cell is `ops.cyclePayment`; tapping the unit
+  closes the view, opens the panel on Payments, and reopens the view at
+  the same month when the panel closes (`returnTo` in `App.jsx`). The
+  month shown is App state (`month`), kept while the app is open.
+- **Payment marker** (`PaymentMark` in `UnitBox.jsx`): a small alert-toned
+  tag in the box's control row when the CURRENT local month is explicitly
+  unpaid or late — "late", "unpaid", or per half ("A unpaid · B late"). An
+  untracked month shows nothing. A plain span, so the figure keeps its
+  width and a tap on it opens the panel; it prints too. Photo mode is
+  untouched.
 - **Rent bars** (`RentBar` in `UnitBox.jsx`): 3px bar along the bottom of
   every box, `rentPerRental(unit) / totals.maxRent`; amber below 70%.
   `rentPerRental` is the larger half of a split unit. Hidden until any rent
@@ -398,7 +492,9 @@ Amounts are plain numbers in dollars. Round only at display with
 - Components: `Elevation.jsx` (sheet + grade line), `Building.jsx` (roof,
   floors, side boxes, caption, geometry constants), `UnitBox.jsx` (box, rent
   input, status dot, split party wall), `TitleBlock.jsx` (totals),
-  `UnitPanel.jsx` (detail panel: header fields + Bills / List / Updates tabs).
+  `UnitPanel.jsx` (detail panel: header fields + Payments / Bills / List /
+  Updates tabs), `MonthView.jsx` (one month of payments across the
+  portfolio).
 - Unit edits flow through `updateUnit(unitId, patch)` in `App.jsx`, which
   calls `ops.patchUnit`; `patch` is a partial unit or a function
   `(unit) => partial`. Use the function form for anything that appends to or
