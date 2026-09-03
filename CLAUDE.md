@@ -93,7 +93,10 @@ nothing lost, untracked vs unpaid, no implicit writes on a rent change /
 rename / split / unsplit / portfolio move, split halves through an unsplit,
 a record's amount outliving a rent change, the month boundary in Los
 Angeles and Tokyo, the removal guards counting records, export/import
-round-tripping history).
+round-tripping history), and `tests/leases.test.mjs` (days remaining from
+local midnight — today 0, yesterday -1, 30 and 90 on their edges — in this
+process and in Los Angeles and Tokyo, the overview's order and groups, the
+undated units in their own group).
 
 ### Portfolios
 
@@ -166,6 +169,24 @@ React in either, so the node tests import them directly).
 - `moveProperty(state, propertyId, portfolioId)` moves a building between
   portfolios by id only — the building and its records are the same
   objects after. Data op only; no UI for it yet.
+
+### Leases
+
+`src/lib/leases.js` (no React) is the one place lease-end dates are turned
+into days: `daysUntil(ymd, today)` builds both ends at LOCAL midnight and
+rounds the difference to whole days, so a lease ending today reads 0
+wherever the user is and a DST change never shifts it. `parseDay` refuses
+a rolled-over day (Feb 30). `leaseGroupFor(days)` gives `'ended'` (< 0),
+`'soon'` (0–30), `'quarter'` (31–90), `'later'` (> 90), or `'none'`;
+`LEASE_GROUPS` is that order with labels, "No date set" last. `leaseRows`
+lists every unit of the buildings it is given, dated rows soonest first
+(ties in drawing order), then the undated rows with leased ones first —
+a vacant unit is listed too, with its status, never hidden. `leaseGroups`
+fills the groups; `leaseSummary` counts them, and `within90` (0–90
+inclusive, ended not counted) is what the header chip shows. The unit
+panel's `leaseFlag` ("renews soon" within `RENEW_WINDOW_DAYS` = 60,
+"ended" when past) lives here too and is re-exported by `UnitPanel.jsx`.
+Nothing here writes: the schema, the totals, and payments are untouched.
 
 ### Rules enforced in the data layer (`ops.js`)
 
@@ -411,8 +432,8 @@ Amounts are plain numbers in dollars. Round only at display with
 - **Removing a building** (caption, Build mode): a building with units shows
   "Remove building" and the armed chip names its contents through
   `TwoTapChip`'s `detail`; an empty one keeps the quiet `✕ Building`.
-- **Toolbar** (under the header): Payments, Raise rents, Undo (while a raise
-  is undoable), Print / PDF, Backup. Chips are 40px tall for phones.
+- **Toolbar** (under the header): Payments, Leases, Raise rents, Undo (while
+  a raise is undoable), Print / PDF, Backup. Chips are 40px tall for phones.
 - **Building picker** (`BuildingPicker.jsx`, under the toolbar, hidden with
   fewer than two buildings): "All" or one building. Selection is UI state
   only (`lib/selection.js`): more than `SIDE_BY_SIDE_MAX` (3) buildings
@@ -449,6 +470,19 @@ Amounts are plain numbers in dollars. Round only at display with
   closes the view, opens the panel on Payments, and reopens the view at
   the same month when the panel closes (`returnTo` in `App.jsx`). The
   month shown is App state (`month`), kept while the app is open.
+- **Leases view** (`LeaseView.jsx`, the "◷ Leases" toolbar chip and the
+  header chip): every unit in the active portfolio, soonest lease end
+  first, grouped Ended / Within 30 days / Within 90 days / Later, then "No
+  date set" at the bottom — visible, not hidden, with the unit's status on
+  the row. Each row shows unit, building, floor, tenant, the end date, the
+  days remaining as a number (0 for today) with a word under it. Tapping a
+  row closes the view, opens the unit panel, and comes back to the view
+  when the panel closes (`returnTo`, shared with the month view). Three
+  cells on top: Ended, Within 90 days, No date set.
+- **Lease chip** (`SheetHeader` in `App.jsx`): an amber `Chip`
+  (`tone="amber"`) beside the title with `leaseSummary(inPortfolio).within90`
+  — leases ending today through 90 days out — that opens the Leases view.
+  At zero there is no chip at all.
 - **Payment marker** (`PaymentMark` in `UnitBox.jsx`): a small alert-toned
   tag in the box's control row when the CURRENT local month is explicitly
   unpaid or late — "late", "unpaid", or per half ("A unpaid · B late"). An
@@ -494,7 +528,8 @@ Amounts are plain numbers in dollars. Round only at display with
   input, status dot, split party wall), `TitleBlock.jsx` (totals),
   `UnitPanel.jsx` (detail panel: header fields + Payments / Bills / List /
   Updates tabs), `MonthView.jsx` (one month of payments across the
-  portfolio).
+  portfolio), `LeaseView.jsx` (every lease end in the portfolio, soonest
+  first).
 - Unit edits flow through `updateUnit(unitId, patch)` in `App.jsx`, which
   calls `ops.patchUnit`; `patch` is a partial unit or a function
   `(unit) => partial`. Use the function form for anything that appends to or
@@ -505,8 +540,9 @@ Amounts are plain numbers in dollars. Round only at display with
   (`UnitBox.handleBoxTap` ignores buttons, inputs, selects, labels).
 - Deleting a bill, list item, or note is two taps (arm, then confirm within
   3s). Nothing in the panel can delete a unit.
-- Lease flag: `leaseFlag()` in `UnitPanel.jsx` shows amber "renews soon" when
-  `leaseEnd` is 0–60 days out (inclusive), alert "ended" when past.
+- Lease flag: `leaseFlag()` (in `lib/leases.js`, re-exported by
+  `UnitPanel.jsx`) shows amber "renews soon" when `leaseEnd` is 0–60 days
+  out (inclusive), alert "ended" when past. Days are local-midnight days.
 - Unit-level bills are summed per unit in the panel (`unitBillsMonthly`).
   `computeTotals` already includes both property bills and unit bills in
   "net after bills"; the panel reuses `billMonthly` so the two agree.

@@ -25,6 +25,11 @@ expected, what came in, and what is still owed across the portfolio. A
 month you never marked is untracked — grey, not unpaid — and a unit whose
 current month is late or unpaid gets a small marker on the drawing.
 
+Leases on the toolbar lists every unit in the portfolio by lease end,
+soonest first — ended, within 30 days, within 90 days, later — and puts the
+units with no end date in their own group at the bottom rather than hiding
+them. A chip beside the title counts the leases ending within 90 days.
+
 There is no backend. All data lives in the browser's `localStorage`.
 
 ## Stack
