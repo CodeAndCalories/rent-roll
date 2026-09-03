@@ -22,7 +22,14 @@
 //              splittable, isSplit, splitRent, // any unit can be splittable
 //              sideOf,                        // 'left' | 'right': side a 'side' unit hangs off (default 'left')
 //              photoBox,                      // null or { x, y, w, h } as fractions (0-1) of the photo
+//              payments,                      // { [paymentKey]: Payment } — see below
 //              bills[], tasks[], notes[] }
+//   Payment  { half, status, amount, paidOn, note }
+//              half: 'A' | 'B'                // 'A' is the unit (or its first half when split)
+//              status: 'unpaid' | 'partial' | 'paid' | 'late' | 'waived'
+//              amount: dollars this record is about (defaults to the rent
+//                      at the time of marking; never rewritten afterwards)
+//              paidOn: 'YYYY-MM-DD' or null;  note: free text
 //   Bill     { id, label, amount, cadence, dueDay, paid } // cadence: 'monthly'|'yearly'|'once'
 //   Task     { id, text, done, createdAt }
 //   Note     { id, text, createdAt }
@@ -44,6 +51,14 @@
 // Split units: when `isSplit` is true, `rent` is the first half's rent and
 // `splitRent` is the second half's rent. When not split, `rent` is the whole
 // unit and `splitRent` is ignored (but kept).
+//
+// Payments: `unit.payments` is keyed by month. The key for the unit (or its
+// first half) is the plain month, 'YYYY-MM'; the second half of a split unit
+// is 'YYYY-MM:B' (paymentKey / parsePaymentKey). A month with NO key is
+// untracked, which is not the same as a month explicitly marked 'unpaid' —
+// nothing ever writes a record on its own. Only setPayment / clearPayment in
+// ops.js create, change, or remove one. Months are local calendar months,
+// stored as plain strings (see lib/months.js); no Date ever goes in storage.
 
 // v1: initial.
 // v2: + property.photoSize, property.view, unit.sideOf (default 'right'),
@@ -61,7 +76,12 @@
 //     where they are, at the top level; a portfolio only lists ids. A store
 //     with no portfolios gets one named "My properties" holding every
 //     building it already had, so nothing moves and nothing is lost.
-export const SCHEMA_VERSION = 6
+// v7: + unit.payments (default {}): per-month payment records, keyed by
+//     'YYYY-MM' (or 'YYYY-MM:B' for the second half of a split unit).
+//     Additive; filled by normalizeState, no migration step. Every unit gets
+//     an empty object and nothing else is touched. A stored record is kept
+//     as it is; absent keys stay absent (untracked), they are never filled.
+export const SCHEMA_VERSION = 7
 
 /** The portfolio every pre-v6 store's buildings are gathered into. */
 export const DEFAULT_PORTFOLIO_NAME = 'My properties'
@@ -72,6 +92,8 @@ export const STATUSES = ['leased', 'vacant', 'renovating']
 export const CADENCES = ['monthly', 'yearly', 'once']
 export const VIEWS = ['drawing', 'photo']
 export const SIDES = ['left', 'right']
+export const PAYMENT_STATUSES = ['unpaid', 'partial', 'paid', 'late', 'waived']
+export const HALVES = ['A', 'B']
 
 // ---------------------------------------------------------------------------
 // ids
@@ -110,6 +132,27 @@ export function toAmount(value) {
 export function toWeight(value) {
   const n = typeof value === 'number' ? value : Number(value)
   return Number.isFinite(n) && n > 0 ? n : 1
+}
+
+// ---------------------------------------------------------------------------
+// payment keys — 'YYYY-MM' for the unit / half A, 'YYYY-MM:B' for half B
+// ---------------------------------------------------------------------------
+
+/** True for a stored month string: 'YYYY-MM' with a real month number. */
+export function isMonthKey(v) {
+  return typeof v === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(v)
+}
+
+/** The key a payment record is stored under. */
+export function paymentKey(month, half = 'A') {
+  return half === 'B' ? `${month}:B` : month
+}
+
+/** { month, half } for a stored key, or null when it is not one. */
+export function parsePaymentKey(key) {
+  const m = /^(\d{4}-(?:0[1-9]|1[0-2]))(?::([AB]))?$/.exec(String(key ?? ''))
+  if (!m) return null
+  return { month: m[1], half: m[2] === 'B' ? 'B' : 'A' }
 }
 
 /** Display-only rounding. Keeps stored values exact. */
@@ -155,6 +198,43 @@ export function makeBill(fields = {}) {
   }
 }
 
+/**
+ * One payment record, every field present, unknown fields kept. This only
+ * normalizes a record that already exists; it never decides whether a month
+ * has one (that is setPayment's job, in ops.js).
+ */
+export function makePayment(fields = {}) {
+  return {
+    half: 'A',
+    status: 'unpaid',
+    amount: 0,
+    paidOn: null, // 'YYYY-MM-DD' or null
+    note: '',
+    ...fields,
+    half: fields.half === 'B' ? 'B' : 'A',
+    status: PAYMENT_STATUSES.includes(fields.status) ? fields.status : 'unpaid',
+    amount: toAmount(fields.amount),
+    paidOn: typeof fields.paidOn === 'string' && fields.paidOn !== '' ? fields.paidOn : null,
+    note: fields.note == null ? '' : String(fields.note),
+  }
+}
+
+/**
+ * The payments map of a unit. Every object-valued entry is kept under the
+ * key it was stored with; the key decides the half when it can be read.
+ * Nothing is added: a month with no entry stays untracked.
+ */
+export function asPayments(v) {
+  const out = {}
+  if (!isObject(v)) return out
+  for (const [key, record] of Object.entries(v)) {
+    if (!isObject(record)) continue
+    const parsed = parsePaymentKey(key)
+    out[key] = makePayment(parsed ? { ...record, half: parsed.half } : record)
+  }
+  return out
+}
+
 export function makeUnit(fields = {}) {
   return {
     id: newId('unit'),
@@ -171,6 +251,7 @@ export function makeUnit(fields = {}) {
     splitRent: 0,
     sideOf: 'left',
     photoBox: null,
+    payments: {}, // { [paymentKey]: Payment }; an absent month is untracked
     bills: [],
     tasks: [],
     notes: [],
@@ -178,6 +259,7 @@ export function makeUnit(fields = {}) {
     widthWeight: toWeight(fields.widthWeight),
     rent: toAmount(fields.rent),
     splitRent: toAmount(fields.splitRent),
+    payments: asPayments(fields.payments),
     bills: asArray(fields.bills).map(makeBill),
     tasks: asArray(fields.tasks).map(makeTask),
     notes: asArray(fields.notes).map(makeNote),

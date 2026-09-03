@@ -287,7 +287,8 @@ function defaultExportFilename(d = new Date()) {
  *
  * Merge rules:
  *   * Entities are matched by id at every level (portfolio, property,
- *     floor, unit, bill, task, note).
+ *     floor, unit, bill, task, note), and payment records by their month
+ *     key.
  *   * Matched: the incoming scalar fields win; nested lists are merged
  *     recursively. Fields the incoming item lacks are kept from the
  *     existing one.
@@ -374,6 +375,7 @@ function newReport() {
     bills: tally(),
     tasks: tally(),
     notes: tally(),
+    payments: tally(),
   }
 }
 
@@ -406,10 +408,33 @@ function mergePortfolio(ex, inc) {
   return { ...ex, ...inc, propertyIds }
 }
 
+/**
+ * Payment records merge by key ('YYYY-MM' or 'YYYY-MM:B'): a matched month
+ * takes the file's fields, a month only the file knows is added, and a
+ * month only this sheet knows is kept. No record is ever dropped.
+ */
+function mergePayments(existing, incoming, tally) {
+  const out = { ...(isObject(existing) ? existing : {}) }
+  for (const [key, inc] of Object.entries(isObject(incoming) ? incoming : {})) {
+    if (!isObject(inc)) continue
+    if (!isObject(out[key])) {
+      out[key] = inc
+      tally.added++
+    } else {
+      const merged = { ...out[key], ...inc }
+      if (JSON.stringify(merged) !== JSON.stringify(out[key])) tally.updated++
+      else tally.unchanged++
+      out[key] = merged
+    }
+  }
+  return out
+}
+
 function mergeUnit(ex, inc, report) {
   return {
     ...ex,
     ...inc,
+    payments: mergePayments(ex.payments, inc.payments, report.payments),
     bills: mergeById(ex.bills, inc.bills, mergeLeaf, report.bills),
     tasks: mergeById(ex.tasks, inc.tasks, mergeLeaf, report.tasks),
     notes: mergeById(ex.notes, inc.notes, mergeLeaf, report.notes),

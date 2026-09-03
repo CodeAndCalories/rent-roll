@@ -159,7 +159,7 @@ test('a saved v2 store loads at the current version with every value intact', ()
   assert.equal(r.source, 'storage')
   assert.equal(r.from, 2)
   assert.equal(r.state.version, SCHEMA_VERSION)
-  assert.equal(SCHEMA_VERSION, 6)
+  assert.equal(SCHEMA_VERSION, 7)
   assert.equal(r.warnings.length, 0)
 
   const p = r.state.properties[0]
