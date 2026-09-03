@@ -515,7 +515,7 @@ function listOf(items) {
 /** "3F" on top -> "4F"; otherwise count + "F". */
 export function nextFloorLabel(floors) {
   const top = floors[0]?.label ?? ''
-  const m = /^(d+)F$/i.exec(String(top).trim())
+  const m = /^(\d+)F$/i.exec(String(top).trim())
   if (m) return `${Number(m[1]) + 1}F`
   return `${floors.length + 1}F`
 }

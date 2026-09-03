@@ -68,6 +68,15 @@ test('add floor: goes on top, labelled off the old top floor, with one unit', ()
   assert.equal(nextFloorLabel([{ label: 'Street' }]), '2F')
   assert.equal(nextFloorLabel([]), '1F')
 
+  // the label is read off the TOP floor, not counted: Basement / 1F / 2F
+  // (top first: 2F, 1F, Basement) gets 3F, where a count would say 4F
+  const cellar = [{ label: '2F' }, { label: '1F' }, { label: 'Basement' }]
+  assert.equal(nextFloorLabel(cellar), '3F')
+  const withBasement = makeState({
+    properties: [{ id: 'B', name: 'Cellar', floors: cellar.map((f) => ({ ...f, units: [] })) }],
+  })
+  assert.equal(prop(addFloor(withBasement, 'B')).floors[0].label, '3F')
+
   // ids are fresh every time
   const a = addFloor(before, id)
   const b = addFloor(before, id)
