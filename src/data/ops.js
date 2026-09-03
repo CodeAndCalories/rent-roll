@@ -13,16 +13,35 @@
 //   * There is always at least one portfolio, and a portfolio that holds
 //     buildings only goes with { force: true } (which takes its buildings
 //     with it).
-//   * A unit can be removed only when it is empty (isEmptyUnit), a floor
-//     only when it has no units.
+//   * A unit can be removed only when it is empty (isEmptyUnit) — no rent,
+//     tenant, bills, list items, notes, or payment records — a floor only
+//     when it has no units.
 //   * Width weights are positive numbers, and a side annex never carries
 //     one: it has its own fixed width and is not part of a floor's split.
+//   * Payment records are written ONLY by setPayment / clearPayment /
+//     cyclePayment, each one explicit user action on one month of one
+//     rental. patchUnit ignores a `payments` field in its patch, so no
+//     other write — a rent change, a rename, a split or unsplit, a raise, a
+//     move between portfolios — can create, change, or drop a record. A
+//     month with no record is untracked, which is not unpaid.
 //
 // Existing stores that already break a rule (older data) are never rejected
 // for unrelated edits: a property patch is refused only if it ADDS a
 // violation.
 
-import { makeFloor, makeUnit, toAmount, toWeight, withPortfolios } from './schema.js'
+import {
+  HALVES,
+  PAYMENT_STATUSES,
+  isMonthKey,
+  makeFloor,
+  makePayment,
+  makeUnit,
+  paymentKey,
+  toAmount,
+  toWeight,
+  withPortfolios,
+} from './schema.js'
+import { countPayments, defaultAmountFor, nextPaymentStatus } from './payments.js'
 
 export class RuleError extends Error {
   constructor(message, code) {
@@ -123,6 +142,8 @@ export function relayoutFloor(floor) {
  *   * splittable: false  -> isSplit is forced false
  *   * position: 'side'   -> rejected with RuleError unless sideAnnexCheck ok
  *   * toggling side annex on/off relays out the floor's main units
+ *   * a `payments` field in the patch is IGNORED: records are written only
+ *     by setPayment / clearPayment, so nothing else can touch them
  * Unknown unit id: state is returned unchanged.
  */
 export function patchUnit(state, unitId, patch) {
@@ -131,7 +152,9 @@ export function patchUnit(state, unitId, patch) {
   const partial = typeof patch === 'function' ? patch(hit.unit) : patch
   if (!partial || typeof partial !== 'object') return state
 
-  const next = { ...hit.unit, ...partial }
+  const fields = { ...partial }
+  delete fields.payments // never rides along; see setPayment / clearPayment
+  const next = { ...hit.unit, ...fields }
   if (!next.splittable && next.isSplit) next.isSplit = false
 
   const wasSide = hit.unit.position === 'side'
@@ -141,6 +164,11 @@ export function patchUnit(state, unitId, patch) {
     if (!check.ok) throw new RuleError(check.reason, check.code)
   }
 
+  return replaceUnit(state, hit, next, isSide !== wasSide)
+}
+
+/** Put `next` where hit.unit is; relayout the floor when asked (annex toggled). */
+function replaceUnit(state, hit, next, relayout = false) {
   return {
     ...state,
     properties: state.properties.map((p) => {
@@ -149,8 +177,8 @@ export function patchUnit(state, unitId, patch) {
         ...p,
         floors: p.floors.map((f) => {
           if (f.id !== hit.floor.id) return f
-          const updated = { ...f, units: f.units.map((u) => (u.id === unitId ? next : u)) }
-          return isSide !== wasSide ? relayoutFloor(updated) : updated
+          const updated = { ...f, units: f.units.map((u) => (u.id === hit.unit.id ? next : u)) }
+          return relayout ? relayoutFloor(updated) : updated
         }),
       }
     }),
@@ -165,6 +193,81 @@ export function setSideAnnex(state, unitId, on) {
 /** Convenience: mark or unmark a unit as splittable (off also un-splits). */
 export function setSplittable(state, unitId, on) {
   return patchUnit(state, unitId, on ? { splittable: true } : { splittable: false, isSplit: false })
+}
+
+// ---------------------------------------------------------------------------
+// payments — the only writers of unit.payments
+//
+// A month with no record is untracked, which is not unpaid. Nothing here
+// runs on its own: no backfill, no "paid because rent is set", nothing on a
+// month rollover. Each function is one explicit user action on one month
+// of one rental (the unit, or half 'A' / 'B' of a split unit).
+// ---------------------------------------------------------------------------
+
+/**
+ * Create or change the record for one month of one rental. `patch` may
+ * carry status, amount, paidOn, note. A new record's amount starts at the
+ * rent stored for that half right now (defaultAmountFor) and is its own
+ * from then on: a later rent change never rewrites it. A write that
+ * changes nothing returns the very same state. Rejected with RuleError for
+ * a bad month, half, or status; an unknown unit leaves the state unchanged.
+ */
+export function setPayment(state, unitId, month, half = 'A', patch = {}) {
+  const hit = locateUnit(state, unitId)
+  if (!hit) return state
+  if (!isMonthKey(month)) throw new RuleError(`"${month}" is not a month (YYYY-MM).`, 'bad-month')
+  if (!HALVES.includes(half)) throw new RuleError(`"${half}" is not a half (A or B).`, 'bad-half')
+  if (!patch || typeof patch !== 'object') return state
+  if (patch.status !== undefined && !PAYMENT_STATUSES.includes(patch.status)) {
+    throw new RuleError(`"${patch.status}" is not a payment status.`, 'bad-status')
+  }
+
+  const key = paymentKey(month, half)
+  const existing = hit.unit.payments?.[key] ?? null
+  const fields = {}
+  for (const [k, v] of Object.entries(patch)) if (v !== undefined) fields[k] = v
+  const record = makePayment({
+    ...(existing ?? { amount: defaultAmountFor(hit.unit, half) }),
+    ...fields,
+    half,
+  })
+  if (existing && sameRecord(existing, record)) return state
+
+  const payments = { ...(hit.unit.payments ?? {}), [key]: record }
+  return replaceUnit(state, hit, { ...hit.unit, payments })
+}
+
+/** Take one month's record away — untracked again. A month with none is a no-op. */
+export function clearPayment(state, unitId, month, half = 'A') {
+  const hit = locateUnit(state, unitId)
+  if (!hit) return state
+  const key = paymentKey(month, half)
+  const payments = hit.unit.payments ?? {}
+  if (!Object.prototype.hasOwnProperty.call(payments, key)) return state
+  const rest = { ...payments }
+  delete rest[key]
+  return replaceUnit(state, hit, { ...hit.unit, payments: rest })
+}
+
+/**
+ * The tap in the month view: untracked -> paid -> partial -> late ->
+ * unpaid -> waived, then back to untracked for a record nothing was typed
+ * into, or round to paid for one with a note, a date, or an amount of its
+ * own (nextPaymentStatus). A tap never drops anything that was typed.
+ */
+export function cyclePayment(state, unitId, month, half = 'A') {
+  const hit = locateUnit(state, unitId)
+  if (!hit) return state
+  const next = nextPaymentStatus(hit.unit, month, half)
+  if (next === null) return clearPayment(state, unitId, month, half)
+  return setPayment(state, unitId, month, half, { status: next })
+}
+
+/** Same fields, same values (records hold only primitives). */
+function sameRecord(a, b) {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)])
+  for (const k of keys) if (a[k] !== b[k]) return false
+  return true
 }
 
 /**
@@ -236,6 +339,7 @@ export function describeContents(property) {
       (property?.bills ?? []).filter((b) => toAmount(b.amount) > 0).length,
     tasks: units.reduce((n, u) => n + (u.tasks?.length ?? 0), 0),
     notes: units.reduce((n, u) => n + (u.notes?.length ?? 0), 0),
+    payments: units.reduce((n, u) => n + countPayments(u), 0),
   }
 
   const held = [
@@ -244,6 +348,7 @@ export function describeContents(property) {
     counts.bills && `${counts.bills} ${counts.bills === 1 ? 'bill' : 'bills'}`,
     counts.tasks && `${counts.tasks} list ${counts.tasks === 1 ? 'item' : 'items'}`,
     counts.notes && `${counts.notes} ${counts.notes === 1 ? 'note' : 'notes'}`,
+    counts.payments && `${counts.payments} payment ${counts.payments === 1 ? 'record' : 'records'}`,
   ].filter(Boolean)
 
   const short = `${counts.units} ${counts.units === 1 ? 'unit' : 'units'}`
@@ -285,6 +390,27 @@ export function renamePortfolio(state, portfolioId, name) {
 }
 
 /**
+ * Move a building to another portfolio. Only the id lists change: the
+ * building, its units, and every payment record on them are the very same
+ * objects afterwards. Rejected with RuleError for an unknown portfolio; an
+ * unknown building, or one already there, leaves the state unchanged.
+ */
+export function moveProperty(state, propertyId, portfolioId) {
+  if (!state.properties.some((p) => p.id === propertyId)) return state
+  const list = state.portfolios ?? []
+  const target = list.find((f) => f.id === portfolioId)
+  if (!target) throw new RuleError('That portfolio does not exist.', 'no-portfolio')
+  if (target.propertyIds.includes(propertyId)) return state
+  return withPortfolios({
+    ...state,
+    portfolios: list.map((f) => {
+      const propertyIds = f.propertyIds.filter((id) => id !== propertyId)
+      return { ...f, propertyIds: f.id === target.id ? [...propertyIds, propertyId] : propertyIds }
+    }),
+  })
+}
+
+/**
  * What a portfolio holds, for its removal confirm: its buildings and their
  * contents rolled up.
  */
@@ -296,12 +422,14 @@ export function describePortfolio(state, portfolioId) {
   const parts = properties.map(describeContents)
   const units = parts.reduce((n, d) => n + d.units, 0)
   const withRent = parts.reduce((n, d) => n + d.withRent, 0)
+  const payments = parts.reduce((n, d) => n + d.payments, 0)
   const buildings = properties.length
 
   const bits = [
     `${buildings} ${buildings === 1 ? 'building' : 'buildings'}`,
     units && `${units} ${units === 1 ? 'unit' : 'units'}`,
     withRent && `${withRent} with rent`,
+    payments && `${payments} payment ${payments === 1 ? 'record' : 'records'}`,
   ].filter(Boolean)
 
   return {
@@ -309,6 +437,7 @@ export function describePortfolio(state, portfolioId) {
     buildings,
     units,
     withRent,
+    payments,
     empty: buildings === 0,
     short: `${buildings} ${buildings === 1 ? 'building' : 'buildings'}`,
     text: buildings === 0 ? 'It holds no buildings.' : `Takes ${bits.join(' · ')} with it.`,
@@ -354,14 +483,33 @@ const floorsOf = (property) => (Array.isArray(property?.floors) ? property.floor
 /** True when nothing of value is stored on the unit, so it may be removed. */
 export function isEmptyUnit(unit) {
   if (!unit) return false
-  return (
-    toAmount(unit.rent) === 0 &&
-    toAmount(unit.splitRent) === 0 &&
-    !(unit.tenant && String(unit.tenant).trim()) &&
-    !(unit.bills && unit.bills.length) &&
-    !(unit.tasks && unit.tasks.length) &&
-    !(unit.notes && unit.notes.length)
-  )
+  return unitHoldings(unit).length === 0
+}
+
+/**
+ * What a unit holds, as short phrases for a message: 'rent', 'a second
+ * rent', 'a tenant', '2 bills', '1 list item', '3 notes', '4 payment
+ * records'. Empty for a unit that may be removed.
+ */
+export function unitHoldings(unit) {
+  const n = (count, one, many) => (count === 1 ? `1 ${one}` : `${count} ${many}`)
+  const held = []
+  if (toAmount(unit?.rent) !== 0) held.push('rent')
+  if (toAmount(unit?.splitRent) !== 0) held.push('a second rent')
+  if (unit?.tenant && String(unit.tenant).trim()) held.push('a tenant')
+  if (unit?.bills?.length) held.push(n(unit.bills.length, 'bill', 'bills'))
+  if (unit?.tasks?.length) held.push(n(unit.tasks.length, 'list item', 'list items'))
+  if (unit?.notes?.length) held.push(n(unit.notes.length, 'note', 'notes'))
+  const payments = countPayments(unit)
+  if (payments) held.push(n(payments, 'payment record', 'payment records'))
+  return held
+}
+
+/** 'a', 'a and b', 'a, b, and c'. */
+function listOf(items) {
+  if (items.length <= 1) return items.join('')
+  if (items.length === 2) return `${items[0]} and ${items[1]}`
+  return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`
 }
 
 /** "3F" on top -> "4F"; otherwise count + "F". */
@@ -436,14 +584,15 @@ export function addSideAnnex(state, propertyId, side = 'left') {
 
 /**
  * Remove a unit. Rejected with RuleError unless the unit is empty, so a unit
- * holding rent, a tenant, bills, list items, or notes can never be dropped.
+ * holding rent, a tenant, bills, list items, notes, or payment records can
+ * never be dropped; the message names exactly what it holds.
  */
 export function removeUnit(state, unitId) {
   const hit = locateUnit(state, unitId)
   if (!hit) return state
   if (!isEmptyUnit(hit.unit)) {
     throw new RuleError(
-      `${hit.unit.name || 'That unit'} has rent, a tenant, bills, list items, or notes. ` +
+      `${hit.unit.name || 'That unit'} has ${listOf(unitHoldings(hit.unit))}. ` +
         'Clear it in the unit panel first.',
       'not-empty',
     )
