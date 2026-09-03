@@ -18,6 +18,7 @@ const ENTITY_LABELS = [
   ['tasks', 'list items'],
   ['notes', 'notes'],
   ['payments', 'payment records'],
+  ['scenarios', 'scenarios'],
 ]
 
 export function describeReport(report) {
@@ -104,8 +105,8 @@ export default function BackupSheet({ state, onImport, onNotice, onClose }) {
             Download JSON
           </Chip>
           <p className="text-[10px] text-line/60">
-            Saves <span className="text-ink">rent-roll-{today()}.json</span> with every portfolio, not
-            just the one on screen — photos included. Keep it somewhere safe; localStorage is per browser.
+            Saves <span className="text-ink">rent-roll-{today()}.json</span> with every portfolio and its
+            scenarios, not just the one on screen — photos included. Keep it somewhere safe; localStorage is per browser.
           </p>
         </section>
 

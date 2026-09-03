@@ -43,6 +43,7 @@ export default function Elevation({
   structure = {},
   rentScale = 0,
   readOnly = false,
+  photos = true, // false in a scenario: the captions offer no photo controls
 }) {
   const [buildId, setBuildId] = useState(null)
   const list = Array.isArray(properties) ? properties : []
@@ -90,6 +91,7 @@ export default function Elevation({
                 onRemoveProperty={onRemoveProperty}
                 onSetPhoto={onSetPhoto}
                 onNotice={onNotice}
+                photos={photos}
               />
             ))}
             <div style={{ width: ADD_W }} aria-hidden />

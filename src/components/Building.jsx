@@ -512,6 +512,7 @@ export function BuildingCaption({
   property,
   width,
   build = false,
+  photos = true, // false in a scenario: photos are not part of one
   onToggleBuild,
   onPropertyChange,
   onRemoveProperty,
@@ -568,7 +569,7 @@ export function BuildingCaption({
           </Chip>
         )}
 
-        {photo && (
+        {photos && photo && (
           <div className="inline-flex" role="group" aria-label="View mode">
             <Chip active={!photoView} onClick={() => patch({ view: 'drawing' })}>
               Drawing
@@ -579,19 +580,21 @@ export function BuildingCaption({
           </div>
         )}
 
-        <Chip as="label" className={cx(busy && 'opacity-60')} title="Pick a Street View screenshot">
-          <input
-            type="file"
-            accept="image/*"
-            onChange={pickFile}
-            disabled={busy}
-            aria-label={photo ? 'Replace photo' : 'Add photo'}
-            className="sr-only"
-          />
-          {busy ? 'Resizing…' : photo ? 'Replace photo' : 'Add photo'}
-        </Chip>
+        {photos && (
+          <Chip as="label" className={cx(busy && 'opacity-60')} title="Pick a Street View screenshot">
+            <input
+              type="file"
+              accept="image/*"
+              onChange={pickFile}
+              disabled={busy}
+              aria-label={photo ? 'Replace photo' : 'Add photo'}
+              className="sr-only"
+            />
+            {busy ? 'Resizing…' : photo ? 'Replace photo' : 'Add photo'}
+          </Chip>
+        )}
 
-        {photo && (
+        {photos && photo && (
           <TwoTapChip
             onConfirm={() => patch({ photo: null, photoSize: null, view: 'drawing' })}
             confirmLabel="Remove photo?"

@@ -44,6 +44,8 @@ const PAYMENT_WINDOW = 12
  *   onUntrack   (month, half) => void          ops.clearPayment behind it
  *   onClose     () => void
  *   initialTab  'payments' | 'bills' | 'list' | 'updates'
+ *   scenario    true while the sheet is in a scenario: only the Bills tab,
+ *               and no tenant or lease fields — a scenario holds no facts
  *   context     { sideAnnex: { ok, reason } } from ops.sideAnnexCheck
  */
 export default function UnitPanel({
@@ -53,9 +55,11 @@ export default function UnitPanel({
   onUntrack,
   onClose,
   initialTab = 'payments',
+  scenario = false,
   context = {},
 }) {
-  const [tab, setTab] = useState(initialTab)
+  const tabs = scenario ? TABS.filter((t) => t.id === 'bills') : TABS
+  const [tab, setTab] = useState(scenario ? 'bills' : initialTab)
   const months = lastMonths(PAYMENT_WINDOW, monthKey())
 
   // Escape closes; the page behind the sheet stops scrolling while open.
@@ -95,10 +99,10 @@ export default function UnitPanel({
         aria-label={`${unit.name || 'Unit'} detail`}
         className="animate-slide-up motion-reduce:animate-none fixed inset-x-0 bottom-0 z-40 flex max-h-[88dvh] flex-col border-t-2 border-amber bg-sheet shadow-2xl sm:animate-slide-in sm:inset-y-0 sm:right-0 sm:left-auto sm:max-h-none sm:w-[440px] sm:max-w-full sm:border-t-0 sm:border-l-2"
       >
-        <PanelHeader unit={unit} onChange={onChange} onClose={onClose} context={context} />
+        <PanelHeader unit={unit} onChange={onChange} onClose={onClose} context={context} scenario={scenario} />
 
         <nav role="tablist" className="flex border-b border-line/40 px-2 sm:px-3">
-          {TABS.map((t) => (
+          {tabs.map((t) => (
             <button
               key={t.id}
               type="button"
@@ -143,7 +147,7 @@ export default function UnitPanel({
 // header: name, rent, status, tenant, lease dates
 // ---------------------------------------------------------------------------
 
-function PanelHeader({ unit, onChange, onClose, context }) {
+function PanelHeader({ unit, onChange, onClose, context, scenario = false }) {
   const split = Boolean(unit.splittable && unit.isSplit)
   const flag = leaseFlag(unit.leaseEnd)
 
@@ -185,29 +189,34 @@ function PanelHeader({ unit, onChange, onClose, context }) {
         <Field label="Status" className={split ? 'col-span-2' : ''}>
           <StatusPicker value={unit.status} onChange={(status) => onChange({ status })} />
         </Field>
-        <Field label="Tenant" className="col-span-2">
-          <TextInput
-            value={unit.tenant}
-            onChange={(tenant) => onChange({ tenant })}
-            placeholder="—"
-            aria-label="Tenant name"
-            className="w-full"
-          />
-        </Field>
-        <Field label="Lease start">
-          <DateInput
-            value={unit.leaseStart}
-            onChange={(leaseStart) => onChange({ leaseStart })}
-            ariaLabel="Lease start"
-          />
-        </Field>
-        <Field label="Lease end" flag={flag}>
-          <DateInput
-            value={unit.leaseEnd}
-            onChange={(leaseEnd) => onChange({ leaseEnd })}
-            ariaLabel="Lease end"
-          />
-        </Field>
+        {/* tenant and lease dates are facts: not part of a scenario */}
+        {!scenario && (
+          <>
+            <Field label="Tenant" className="col-span-2">
+              <TextInput
+                value={unit.tenant}
+                onChange={(tenant) => onChange({ tenant })}
+                placeholder="—"
+                aria-label="Tenant name"
+                className="w-full"
+              />
+            </Field>
+            <Field label="Lease start">
+              <DateInput
+                value={unit.leaseStart}
+                onChange={(leaseStart) => onChange({ leaseStart })}
+                ariaLabel="Lease start"
+              />
+            </Field>
+            <Field label="Lease end" flag={flag}>
+              <DateInput
+                value={unit.leaseEnd}
+                onChange={(leaseEnd) => onChange({ leaseEnd })}
+                ariaLabel="Lease end"
+              />
+            </Field>
+          </>
+        )}
       </div>
 
       <LayoutRow unit={unit} onChange={onChange} context={context} />
