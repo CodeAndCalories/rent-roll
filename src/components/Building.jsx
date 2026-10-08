@@ -3,7 +3,7 @@ import UnitBox from './UnitBox.jsx'
 import PhotoBuilding, { PHOTO_MIN_W } from './PhotoBuilding.jsx'
 import { Chip, InlineLabel, TwoTapChip, cx } from './controls.jsx'
 import { countUnits, describeContents } from '../data/ops.js'
-import { equalizePair, growOf, isMainUnit, resizePair } from '../lib/widths.js'
+import { drawnUnits, equalizePair, growOf, isMainUnit, resizePair } from '../lib/widths.js'
 import { PHOTO_MAX_WIDTH, resizeImageFile } from '../lib/image.js'
 
 // All components at module scope (see UnitBox.jsx for why).
@@ -27,7 +27,6 @@ const ANNEX_TAB_W = 56
 const DOUBLE_TAP_MS = 350
 
 const isMain = isMainUnit
-const POSITION_ORDER = { left: 0, full: 1, right: 2 }
 
 /** Layout facts other components need (Elevation uses these for spacing). */
 export function layoutFor(property) {
@@ -188,10 +187,7 @@ function FloorRow({
   // written on release, never on every pointer move.
   const [draft, setDraft] = useState(null)
 
-  const units = floor.units
-    .filter(isMain)
-    .slice()
-    .sort((a, b) => (POSITION_ORDER[a.position] ?? 1) - (POSITION_ORDER[b.position] ?? 1))
+  const units = drawnUnits(floor)
   // A floor only goes when nothing at all is on it, annex included.
   const bare = floor.units.length === 0
   const shown = draft

@@ -27,6 +27,21 @@ export function mainUnits(floor) {
   return (floor?.units ?? []).filter(isMainUnit)
 }
 
+/** Where a main unit sits on its floor: left first, then full, right last. */
+const POSITION_ORDER = { left: 0, full: 1, right: 2 }
+
+/**
+ * A floor's main units in the order they are DRAWN, left to right: by
+ * position (left, full, right), ties in stored order. The drawing and the
+ * unit-count stepper both read this, so "the right" means the same unit
+ * to both.
+ */
+export function drawnUnits(floor) {
+  return mainUnits(floor)
+    .slice()
+    .sort((a, b) => (POSITION_ORDER[a.position] ?? 1) - (POSITION_ORDER[b.position] ?? 1))
+}
+
 /** One unit's weight: a positive finite number, 1 when it has none. */
 export function weightOf(unit) {
   return toWeight(unit?.widthWeight)

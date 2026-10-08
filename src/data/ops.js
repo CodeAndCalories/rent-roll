@@ -38,6 +38,9 @@
 //     removePropertyBill / setBillLoan, and patchProperty refuses any write
 //     that would give a building a second loan bill. Only the terms are
 //     stored; nothing derived from them is ever written.
+//   * setFloorUnitCount adds and removes main units at the right-hand end
+//     of a floor as drawn, and never removes one that holds anything
+//     (isEmptyUnit): the whole write is refused, naming that unit.
 //
 // Existing stores that already break a rule (older data) are never rejected
 // for unrelated edits: a property patch is refused only if it ADDS a
@@ -62,6 +65,7 @@ import {
 import { countPayments, defaultAmountFor, nextPaymentStatus } from './payments.js'
 import { SCENARIO_CAP, SCENARIO_CAP_REASON, countScenario, scenarioView } from './scenarios.js'
 import { loanBillCount, loanBillOf } from './loans.js'
+import { drawnUnits } from '../lib/widths.js'
 
 export class RuleError extends Error {
   constructor(message, code) {
@@ -726,6 +730,85 @@ export function addUnitTo(floor) {
   const label = floor.label || 'Unit'
   const name = main.length === 0 ? label : `${label} ${main.length + 1}`
   return relayoutFloor({ ...floor, units: [...units, makeUnit({ name, position: 'full' })] })
+}
+
+/** Most main units the stepper will put on one floor. */
+export const MAX_FLOOR_UNITS = 12
+
+/**
+ * Positions for main units in the order they should be drawn: one is
+ * 'full', two are 'left' + 'right', more are 'left', 'full'…, 'right' —
+ * which the drawing's sort (drawnUnits) reads back in this same order. A
+ * unit already in place stays the same object.
+ */
+function layoutInOrder(units) {
+  const n = units.length
+  return units.map((u, i) => {
+    const position = n === 1 ? 'full' : i === 0 ? 'left' : i === n - 1 ? 'right' : 'full'
+    return u.position === position ? u : { ...u, position }
+  })
+}
+
+/**
+ * Set how many main units a floor has, in one write — the Build stepper.
+ * Units come and go at the RIGHT-hand end of the floor as it is drawn
+ * (drawnUnits): new ones are blank and named off the floor label, and
+ * nothing to their left moves. A side annex is not counted and never
+ * touched.
+ *
+ * Refused with RuleError, and the state left alone, when the count is not
+ * a whole number from 0 to MAX_FLOOR_UNITS, or when going down would take a
+ * unit that holds anything (isEmptyUnit): the message names the unit, what
+ * it holds, and the lowest count the floor can go to. A count the floor
+ * already has returns the very same state.
+ */
+export function setFloorUnitCount(state, propertyId, floorId, count) {
+  const property = state.properties.find((p) => p.id === propertyId)
+  const floor = property ? floorsOf(property).find((f) => f.id === floorId) : null
+  if (!floor) return state
+  const n = typeof count === 'number' ? count : Number(count)
+  if (!Number.isInteger(n) || n < 0 || n > MAX_FLOOR_UNITS) {
+    throw new RuleError(`A floor takes 0 to ${MAX_FLOOR_UNITS} units.`, 'bad-count')
+  }
+
+  const drawn = drawnUnits(floor)
+  if (n === drawn.length) return state
+
+  let mains
+  if (n > drawn.length) {
+    const label = floor.label || 'Unit'
+    const added = []
+    for (let i = drawn.length; i < n; i++) {
+      added.push(makeUnit({ name: i === 0 ? label : `${label} ${i + 1}`, position: 'full' }))
+    }
+    mains = [...drawn, ...added]
+  } else {
+    // from the right: the first unit holding anything is where it stops
+    for (let i = drawn.length - 1; i >= n; i--) {
+      const u = drawn[i]
+      if (isEmptyUnit(u)) continue
+      throw new RuleError(
+        `${u.name || 'A unit'} has ${listOf(unitHoldings(u))}, so ${floor.label || 'this floor'} can go ` +
+          `down to ${i + 1} ${i + 1 === 1 ? 'unit' : 'units'} at the least. Clear it in the unit panel first.`,
+        'not-empty',
+      )
+    }
+    mains = drawn.slice(0, n)
+  }
+
+  // back into the floor's main slots in drawn order; an annex keeps its place
+  const placed = layoutInOrder(mains)
+  let k = 0
+  const units = []
+  for (const u of floor.units ?? []) {
+    if (u.position === 'side') units.push(u)
+    else if (k < placed.length) units.push(placed[k++])
+  }
+  while (k < placed.length) units.push(placed[k++])
+
+  return patchProperty(state, propertyId, (p) => ({
+    floors: floorsOf(p).map((f) => (f.id === floorId ? { ...f, units } : f)),
+  }))
 }
 
 /** Remove one unit from a floor by id; the remaining main units relay out. */

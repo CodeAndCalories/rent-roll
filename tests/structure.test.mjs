@@ -1,7 +1,8 @@
 // Structural writes behind the Build handles on the drawing: adding a floor,
 // adding a unit, hanging a side annex, the empty-unit and empty-floor guards,
-// and renaming. Every one of these goes through ops.js, so the rules hold
-// whatever the UI does. Run with:  npm test
+// renaming, and the unit-count stepper (add or remove at the right in one
+// go, never a unit that holds anything). Every one of these goes through
+// ops.js, so the rules hold whatever the UI does. Run with:  npm test
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -9,6 +10,7 @@ import { makeState } from '../src/data/schema.js'
 import { load, save, STORAGE_KEY } from '../src/data/store.js'
 import { buildFromTemplate } from '../src/data/templates.js'
 import {
+  MAX_FLOOR_UNITS,
   RuleError,
   addFloor,
   addSideAnnex,
@@ -20,8 +22,12 @@ import {
   removeFloor,
   removeUnit,
   renameFloor,
+  setFloorUnitCount,
+  setPayment,
+  setUnitWidths,
   sideAnnexCheck,
 } from '../src/data/ops.js'
+import { drawnUnits } from '../src/lib/widths.js'
 
 class FakeStorage {
   constructor() {
@@ -202,4 +208,121 @@ test('renaming a unit or a floor survives a save and reload', () => {
   assert.equal(save(blanked).ok, true)
   assert.equal(load().state.properties[0].floors[1].label, '   ')
   assert.equal(load().state.properties[0].floors[1].units[0].name, 'Storefront')
+})
+
+// ---------------------------------------------------------------------------
+// the unit-count stepper
+// ---------------------------------------------------------------------------
+
+const drawnNames = (floor) => drawnUnits(floor).map((u) => u.name)
+
+test('stepper: a floor goes to 4 units in one write, new ones on the right', () => {
+  const before = one('single', 'Solo') // 1F, one unit named "Main"
+  const id = prop(before).id
+  const floorId = prop(before).floors[0].id
+  const first = prop(before).floors[0].units[0]
+
+  const after = setFloorUnitCount(before, id, floorId, 4)
+  const floor = prop(after).floors[0]
+  assert.equal(floor.units.length, 4)
+  assert.deepEqual(drawnNames(floor), ['Main', '1F 2', '1F 3', '1F 4'], 'left to right as drawn')
+  assert.deepEqual(positions(floor), ['left', 'full', 'full', 'right'])
+  assert.equal(drawnUnits(floor)[0].id, first.id, 'the unit that was there stays leftmost, same id')
+  assert.equal(new Set(floor.units.map((u) => u.id)).size, 4, 'fresh ids')
+  assert.ok(floor.units.slice(1).every((u) => isEmptyUnit(u) && u.status === 'vacant'), 'new units are blank')
+  assert.equal(countUnits(prop(before)), 1, 'the input state is untouched')
+
+  // the count it already has is the very same state; junk is refused
+  assert.equal(setFloorUnitCount(after, id, floorId, 4), after)
+  assert.throws(() => setFloorUnitCount(after, id, floorId, MAX_FLOOR_UNITS + 1), /0 to 12 units/)
+  assert.throws(() => setFloorUnitCount(after, id, floorId, 2.5), RuleError)
+  assert.throws(() => setFloorUnitCount(after, id, floorId, -1), RuleError)
+  assert.equal(setFloorUnitCount(after, id, 'nope', 2), after, 'an unknown floor is a no-op')
+
+  // a floor the + tab grew (its third unit drawn in the middle) keeps its
+  // look, and the stepper still adds at the right of what is drawn
+  let tabbed = one('single', 'Tabbed')
+  const tid = prop(tabbed).id
+  const tf = prop(tabbed).floors[0].id
+  tabbed = addUnit(addUnit(tabbed, tid, tf), tid, tf)
+  const drawnBefore = drawnUnits(prop(tabbed).floors[0]).map((u) => u.id)
+  const grown = setFloorUnitCount(tabbed, tid, tf, 5)
+  const drawnAfter = drawnUnits(prop(grown).floors[0]).map((u) => u.id)
+  assert.deepEqual(drawnAfter.slice(0, 3), drawnBefore, 'nothing already there moves')
+  assert.equal(drawnAfter.length, 5)
+})
+
+test('stepper: down from the right, and never a unit that holds anything', () => {
+  let state = one('single', 'Solo')
+  const id = prop(state).id
+  const floorId = prop(state).floors[0].id
+  state = setFloorUnitCount(state, id, floorId, 4)
+  const [a, b, c, d] = drawnUnits(prop(state).floors[0])
+
+  // widths ride with their units
+  state = setUnitWidths(state, id, floorId, { [a.id]: 1.4, [b.id]: 0.6 })
+
+  // empty units on the right go; the survivors keep their order and widths
+  const two = setFloorUnitCount(state, id, floorId, 2)
+  const kept = drawnUnits(prop(two).floors[0])
+  assert.deepEqual(kept.map((u) => u.id), [a.id, b.id], 'removed from the right')
+  assert.deepEqual(positions(prop(two).floors[0]), ['left', 'right'])
+  assert.deepEqual(kept.map((u) => u.widthWeight), [1.4, 0.6])
+
+  // anything at all on a unit in the way stops the whole write, and says why
+  const holds = [
+    ['rent', { rent: 950 }],
+    ['a tenant', { tenant: 'B. Tenant' }],
+    ['1 note', { notes: [{ text: 'Keys with the super' }] }],
+    ['1 list item', { tasks: [{ text: 'Paint' }] }],
+    ['1 bill', { bills: [{ label: 'Gas', amount: 30 }] }],
+  ]
+  for (const [what, patch] of holds) {
+    const dirty = patchUnit(state, c.id, patch)
+    assert.throws(
+      () => setFloorUnitCount(dirty, id, floorId, 1),
+      (e) => {
+        assert.ok(e instanceof RuleError, what)
+        assert.equal(e.code, 'not-empty')
+        assert.ok(e.message.includes(`1F 3 has ${what}`), e.message)
+        assert.match(e.message, /can go down to 3 units at the least/)
+        return true
+      },
+    )
+    // the empty unit to its right can still go on its own
+    assert.equal(countUnits(prop(setFloorUnitCount(dirty, id, floorId, 3))), 3)
+  }
+
+  // a payment record counts too, even with no rent on the unit
+  const paid = setPayment(state, d.id, '2026-09', 'A', { status: 'paid' })
+  assert.throws(() => setFloorUnitCount(paid, id, floorId, 3), /1F 4 has 1 payment record/)
+  assert.throws(() => setFloorUnitCount(paid, id, floorId, 0), RuleError)
+  assert.equal(countUnits(prop(paid)), 4, 'a refused write changes nothing')
+
+  // all empty: the floor can go to zero, and a floor with nothing can then be removed
+  const none = setFloorUnitCount(state, id, floorId, 0)
+  assert.equal(prop(none).floors[0].units.length, 0)
+  assert.equal(prop(removeFloor(none, id, floorId)).floors.length, 0)
+})
+
+test('stepper: the side annex is not counted and never touched', () => {
+  let state = one('single', 'Shop')
+  const id = prop(state).id
+  const floorId = prop(state).floors[0].id
+  state = addSideAnnex(state, id, 'left')
+  const annex = prop(state).floors[0].units.find((u) => u.position === 'side')
+  state = patchUnit(state, annex.id, { rent: 1800, tenant: 'Storefront Co' })
+
+  state = setFloorUnitCount(state, id, floorId, 3)
+  let floor = prop(state).floors[0]
+  assert.equal(floor.units.length, 4, 'three main units plus the annex')
+  assert.equal(drawnUnits(floor).length, 3)
+  assert.equal(floor.units[1].id, annex.id, 'the annex keeps its slot')
+
+  // the annex holds data, but it is not in the count, so going down is fine
+  state = setFloorUnitCount(state, id, floorId, 1)
+  floor = prop(state).floors[0]
+  assert.deepEqual(positions(floor), ['full', 'side'])
+  assert.equal(floor.units[1].rent, 1800)
+  assert.equal(sideAnnexCheck(state, annex.id).ok, true)
 })
