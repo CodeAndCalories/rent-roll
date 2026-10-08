@@ -26,7 +26,9 @@ export function sheetContentWidth(properties, { readOnly = false } = {}) {
  * content and at least the viewport width; the parent scrolls it
  * horizontally on narrow screens.
  *
- * readOnly (print view): no captions, no add button, no inputs.
+ * readOnly (print view, the actual side of side by side): no captions, no
+ * add button, no inputs. `names` puts each building's name and address
+ * under its figure as plain text — still nothing to tap.
  * With no properties at all the sheet shows the first-run empty state.
  *
  * One building at a time can be in Build mode (the handles drawn on the
@@ -47,6 +49,7 @@ export default function Elevation({
   structure = {},
   rentScale = 0,
   readOnly = false,
+  names = false,
   photos = true, // false in a scenario: the captions offer no photo controls
 }) {
   const [buildId, setBuildId] = useState(null)
@@ -105,7 +108,28 @@ export default function Elevation({
           </div>
         </div>
       )}
-      {readOnly && <div className="h-4" />}
+      {readOnly && names && (
+        <div className="mx-auto w-max pb-4" style={{ paddingLeft: SHEET_PAD_X, paddingRight: SHEET_PAD_X }}>
+          <div className="flex items-start" style={{ gap: BUILDING_GAP }}>
+            {list.map((p) => (
+              <NameCaption key={p.id} property={p} width={figureWidthFor(p)} />
+            ))}
+          </div>
+        </div>
+      )}
+      {readOnly && !names && <div className="h-4" />}
+    </div>
+  )
+}
+
+/** A read-only caption: the building's name and address, as text. */
+function NameCaption({ property, width }) {
+  return (
+    <div style={{ width }} className="pt-2">
+      <div className="font-display truncate py-0.5 text-sm tracking-[0.25em] text-ink uppercase">
+        {property.name || 'Building'}
+      </div>
+      {property.address && <div className="truncate text-[10px] text-line/70">{property.address}</div>}
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { load, save } from './data/store.js'
+import { load, loadForkBases, save, saveForkBasis } from './data/store.js'
 import { formatDollars, makeBill, makePortfolio } from './data/schema.js'
 import {
   ACTUAL,
@@ -20,6 +20,7 @@ import {
   patchPropertyBill as opsPatchPropertyBill,
   patchScenario as opsPatchScenario,
   patchUnit,
+  refreshScenario as opsRefreshScenario,
   removeFloor as opsRemoveFloor,
   removePortfolio as opsRemovePortfolio,
   removeProperty as opsRemoveProperty,
@@ -37,7 +38,18 @@ import {
 } from './data/ops.js'
 import { buildFromTemplate } from './data/templates.js'
 import { computeTotals } from './data/totals.js'
-import { compareTable, countScenario, forkScenario, scenarioById, scenarioView, scenariosOf } from './data/scenarios.js'
+import {
+  actualSignature,
+  compareTable,
+  countScenario,
+  forkScenario,
+  isStale,
+  planSideBySide,
+  scenarioById,
+  scenarioView,
+  scenariosOf,
+  splitDeltas,
+} from './data/scenarios.js'
 import { leaseSummary } from './lib/leases.js'
 import { monthKey } from './lib/months.js'
 import { ALL, displayedProperties, resolveSelection } from './lib/selection.js'
@@ -58,6 +70,7 @@ import ExpensesView from './components/ExpensesView.jsx'
 import ScenarioBanner from './components/ScenarioBanner.jsx'
 import ScenariosSheet from './components/ScenariosSheet.jsx'
 import CompareView from './components/CompareView.jsx'
+import SplitView, { DeltaBar, SideBySidePicker, SplitBar } from './components/SplitView.jsx'
 import RaiseRentsSheet, { applyChanges, describeRaise } from './components/RaiseRents.jsx'
 import BackupSheet, { describeReport } from './components/Backup.jsx'
 import PrintView from './components/PrintView.jsx'
@@ -88,6 +101,13 @@ export default function App() {
   // Scenario mode: the scenario the sheet edits, or null for real data. UI
   // state only — a reload always comes back to real data.
   const [scenarioId, setScenarioId] = useState(null)
+  // Side by side: actual (read only) beside the open scenario. UI state on
+  // top of scenario mode — every write still aims at the scenario.
+  const [split, setSplit] = useState(false)
+  const [actualCollapsed, setActualCollapsed] = useState(false) // the actual pane shows totals only
+  // What actual looked like at each fork, for "actual changed since" — a
+  // cache beside the data (store.js FORK_BASIS_KEY), never part of it.
+  const [bases, setBases] = useState(() => loadForkBases())
   const [savedAt, setSavedAt] = useState(null) // timestamp of the last good write
 
   // Latest state for callbacks that need to read it outside a render
@@ -304,7 +324,7 @@ export default function App() {
    * whatever the sheet shows.
    */
   const createScenario = useCallback(
-    (name) => {
+    (name, { split: intoSplit = false, auto = false } = {}) => {
       const s = stateRef.current
       const into = resolvePortfolioId(s, portfolioId)
       const scenario = forkScenario(s, into, { name })
@@ -325,21 +345,94 @@ export default function App() {
         return
       }
       writeActual((cur) => opsAddScenario(cur, scenario))
+      setBases(saveForkBasis(scenario.id, actualSignature(s, into), (next.scenarios ?? []).map((x) => x.id)))
       setScenarioId(scenario.id)
+      if (intoSplit) setSplit(true) // a fork made while side by side stays side by side
       setSelected(null)
       setOpenUnitId(null)
       setUndo(null)
       setDialog(null)
       const c = countScenario(scenario)
+      const from = activePortfolio(s, into)?.name || 'this portfolio'
       setNotice({
         tone: 'line',
-        text:
-          `Forked "${scenario.name}" from ${activePortfolio(s, into)?.name || 'this portfolio'}: ` +
-          `${c.buildings} ${c.buildings === 1 ? 'building' : 'buildings'}, ${c.units} ${c.units === 1 ? 'unit' : 'units'}, as of today. ` +
-          'Nothing you change in it touches your real data.',
+        text: auto
+          ? `No scenario yet, so "${scenario.name}" was forked from ${from} to compare: edit it on the scenario side; actual stays read only.`
+          : `Forked "${scenario.name}" from ${from}: ` +
+            `${c.buildings} ${c.buildings === 1 ? 'building' : 'buildings'}, ${c.units} ${c.units === 1 ? 'unit' : 'units'}, as of today. ` +
+            'Nothing you change in it touches your real data.',
       })
     },
     [portfolioId, writeActual],
+  )
+
+  /**
+   * The "Side by side" control. No scenario yet: fork one ("What-if
+   * <date>") and open it beside actual, no questions. Otherwise ask which
+   * goes on the scenario side, "+ new fork" first.
+   */
+  const openSideBySide = useCallback(() => {
+    const s = stateRef.current
+    const plan = planSideBySide(s, resolvePortfolioId(s, portfolioId), new Date())
+    if (plan.action === 'fork') createScenario(plan.name, { split: true, auto: true })
+    else setDialog('sidebyside')
+  }, [portfolioId, createScenario])
+
+  const newForkSideBySide = useCallback(() => {
+    const s = stateRef.current
+    const plan = planSideBySide(s, resolvePortfolioId(s, portfolioId), new Date())
+    const name = plan.action === 'fork' ? plan.name : plan.newFork.ok ? plan.newFork.name : null
+    if (name) createScenario(name, { split: true })
+  }, [portfolioId, createScenario])
+
+  const pickSideBySide = useCallback((id) => {
+    setScenarioId(id)
+    setSplit(true)
+    setSelected(null)
+    setOpenUnitId(null)
+    setUndo(null)
+    setDialog(null)
+  }, [])
+
+  /**
+   * "Refresh from actual" (two taps on the scenario side): the scenario is
+   * forked again from real data as it is now, keeping its id and name. A
+   * trial save first, as for a fork: it is replaced whole or not at all.
+   */
+  const refreshFromActual = useCallback(
+    (id) => {
+      const s = stateRef.current
+      const at = new Date().toISOString()
+      let next
+      try {
+        next = opsRefreshScenario(s, id, { at })
+      } catch (err) {
+        if (err instanceof RuleError) {
+          setNotice({ tone: 'alert', text: err.message })
+          return
+        }
+        throw err
+      }
+      const trial = save(next)
+      if (!trial.ok) {
+        setNotice({ tone: 'alert', text: describeForkFailure(trial, 'the refreshed scenario') })
+        return
+      }
+      writeActual((cur) => opsRefreshScenario(cur, id, { at }))
+      const refreshed = scenarioById(next, id)
+      setBases(saveForkBasis(id, actualSignature(s, refreshed.portfolioId), (next.scenarios ?? []).map((x) => x.id)))
+      setOpenUnitId(null)
+      setUndo(null)
+      const c = countScenario(refreshed)
+      setNotice({
+        tone: 'line',
+        text:
+          `Refreshed "${refreshed.name || 'scenario'}" from your real data as it is today: ` +
+          `${c.buildings} ${c.buildings === 1 ? 'building' : 'buildings'}, ${c.units} ${c.units === 1 ? 'unit' : 'units'}. ` +
+          'The edits that were in it are gone.',
+      })
+    },
+    [writeActual],
   )
 
   const enterScenario = useCallback((id) => {
@@ -356,6 +449,18 @@ export default function App() {
     setOpenUnitId(null)
     setUndo(null)
   }, [])
+
+  /** Leaving side by side goes back to real data. */
+  const exitSplit = useCallback(() => {
+    setSplit(false)
+    exitScenario()
+  }, [exitScenario])
+
+  // Side by side only exists on top of an open scenario: whatever closes
+  // the scenario (exit, a portfolio switch, a delete) closes it too.
+  useEffect(() => {
+    if (!scenarioId) setSplit(false)
+  }, [scenarioId])
 
   const renameScenario = useCallback(
     (id, name) => writeActual((s) => opsPatchScenario(s, id, { name })),
@@ -530,6 +635,23 @@ export default function App() {
   const selection = resolveSelection(inPortfolio, selected)
   const displayed = displayedProperties(inPortfolio, selection)
   const showing = selection === ALL ? null : displayed[0]?.name || 'Building'
+  const splitOn = split && Boolean(scenario)
+  const stale = scenario ? isStale(state, scenario, bases[scenario.id]) : null
+  const sideBySidePlan = dialog === 'sidebyside' ? planSideBySide(state, activeId) : null
+
+  // The editor's handlers: the sheet, and the scenario side of side by side.
+  // Every one of them writes through `write`, which aims at the open scenario.
+  const editor = {
+    onUnitChange: updateUnit,
+    onPropertyChange: updateProperty,
+    onOpenUnit: openUnitPanel,
+    onAddProperty: openTemplatePicker,
+    onRemoveProperty: removeProperty,
+    onSetPhoto: setPhoto,
+    onNotice: setNotice,
+    onOpenBills: openBills,
+    structure,
+  }
 
   if (printing) {
     return (
@@ -557,7 +679,15 @@ export default function App() {
         onLeases={openLeases}
       />
       <UpdatePrompt />
-      {scenario && (
+      {splitOn && (
+        <SplitBar
+          collapsed={actualCollapsed}
+          onToggleCollapsed={() => setActualCollapsed((c) => !c)}
+          onSwitch={openSideBySide}
+          onExit={exitSplit}
+        />
+      )}
+      {scenario && !splitOn && (
         <ScenarioBanner
           scenario={scenario}
           portfolioName={portfolioName}
@@ -567,19 +697,21 @@ export default function App() {
           onManage={() => setDialog('scenarios')}
         />
       )}
-      <PortfolioBar
-        portfolios={portfolioSummaries(state)}
-        activeId={activeId}
-        removal={describePortfolio(state, activeId)}
-        onSelect={(id) => {
-          setPortfolioId(id)
-          setScenarioId(null)
-          setSelected(null)
-        }}
-        onAdd={addPortfolio}
-        onRename={renamePortfolio}
-        onRemove={removePortfolio}
-      />
+      {!splitOn && (
+        <PortfolioBar
+          portfolios={portfolioSummaries(state)}
+          activeId={activeId}
+          removal={describePortfolio(state, activeId)}
+          onSelect={(id) => {
+            setPortfolioId(id)
+            setScenarioId(null)
+            setSelected(null)
+          }}
+          onAdd={addPortfolio}
+          onRename={renamePortfolio}
+          onRemove={removePortfolio}
+        />
+      )}
       <Tools
         onRaise={() => setDialog('raise')}
         onUndo={undo ? undoRaise : null}
@@ -588,39 +720,47 @@ export default function App() {
         onLeases={openLeases}
         onScenarios={() => setDialog('scenarios')}
         onCompare={scenarios.length > 0 ? () => setDialog('compare') : null}
+        onSideBySide={openSideBySide}
+        sideBySide={splitOn}
         scenario={Boolean(scenario)}
         onPrint={() => setPrinting(true)}
         onBackup={() => setDialog('backup')}
       />
-      <BuildingPicker properties={inPortfolio} selection={selection} onSelect={setSelected} />
+      {!splitOn && <BuildingPicker properties={inPortfolio} selection={selection} onSelect={setSelected} />}
       {notice && (
         <Notice notice={notice} onDismiss={() => setNotice(null)} onUndo={notice.undo && undo ? undoRaise : null} />
       )}
 
-      <div className="flex-1 overflow-x-auto overflow-y-hidden pb-8">
-        <Elevation
-          properties={displayed}
-          onUnitChange={updateUnit}
-          onPropertyChange={updateProperty}
-          onOpenUnit={openUnitPanel}
-          onAddProperty={openTemplatePicker}
-          onRemoveProperty={removeProperty}
-          onSetPhoto={setPhoto}
-          onNotice={setNotice}
-          onOpenBills={openBills}
-          structure={structure}
-          rentScale={totals.maxRent}
-          photos={!scenario}
+      {splitOn ? (
+        <SplitView
+          actual={actualProperties}
+          portfolioName={portfolioName}
+          scenario={scenario}
+          stale={stale}
+          collapsed={actualCollapsed}
+          onRename={(name) => renameScenario(scenario.id, name)}
+          onRefresh={() => refreshFromActual(scenario.id)}
+          onExpenses={openExpenses}
+          editor={editor}
+          rentScale={Math.max(computeTotals(actualProperties).maxRent, totals.maxRent)}
         />
-      </div>
+      ) : (
+        <div className="flex-1 overflow-x-auto overflow-y-hidden pb-8">
+          <Elevation {...editor} properties={displayed} rentScale={totals.maxRent} photos={!scenario} />
+        </div>
+      )}
 
-      <TitleBlock
-        totals={totals}
-        saveError={saveError}
-        showing={showing}
-        portfolioName={sheetName}
-        onExpenses={openExpenses}
-      />
+      {splitOn ? (
+        <DeltaBar rows={splitDeltas(actualProperties, scenario.properties)} />
+      ) : (
+        <TitleBlock
+          totals={totals}
+          saveError={saveError}
+          showing={showing}
+          portfolioName={sheetName}
+          onExpenses={openExpenses}
+        />
+      )}
 
       {openUnit && (
         <UnitPanel
@@ -658,6 +798,17 @@ export default function App() {
           onRename={renameScenario}
           onDelete={deleteScenario}
           onCompare={() => setDialog('compare')}
+          onClose={closeDialog}
+        />
+      )}
+      {sideBySidePlan?.action === 'pick' && (
+        <SideBySidePicker
+          plan={sideBySidePlan}
+          portfolioName={portfolioName}
+          currentId={scenarioId}
+          staleOf={(s) => isStale(state, s, bases[s.id])}
+          onNewFork={newForkSideBySide}
+          onPick={pickSideBySide}
           onClose={closeDialog}
         />
       )}
@@ -758,6 +909,8 @@ function Tools({
   onLeases,
   onScenarios,
   onCompare,
+  onSideBySide,
+  sideBySide = false,
   scenario = false,
   onPrint,
   onBackup,
@@ -786,6 +939,14 @@ function Tools({
           ⇔ Compare
         </Chip>
       )}
+      <Chip
+        active={sideBySide}
+        onClick={onSideBySide}
+        title="Your real buildings beside an editable scenario, drawings and all"
+      >
+        ⧉ <span className="sm:hidden">Vs</span>
+        <span className="hidden sm:inline">Side by side</span>
+      </Chip>
       <Chip onClick={onRaise} title="Model a rent increase across leased units">
         ↑ <span className="sm:hidden">Rents</span>
         <span className="hidden sm:inline">Raise rents</span>
@@ -857,10 +1018,10 @@ const SAVED_FLASH_MS = 2000
  */
 const SCENARIO_ACCENT = { '--color-line': '#b79cf2', '--color-ink': '#e7ddff' }
 
-function describeForkFailure(result) {
+function describeForkFailure(result, what = 'another scenario') {
   if (isQuotaError(result.error)) {
     return (
-      `Not enough storage for another scenario: the whole data set would be ${kb(result.bytes)} KB ` +
+      `Not enough storage for ${what}: the whole data set would be ${kb(result.bytes)} KB ` +
       'and the limit is usually about 5,000 KB. Delete a scenario or shrink a photo first. Nothing was written.'
     )
   }

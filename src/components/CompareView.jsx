@@ -110,8 +110,8 @@ function formatValue(kind, value) {
   return kind === 'count' ? String(value) : formatDollars(value)
 }
 
-/** '+$120', '−$80', '+1', or a dash for no difference. */
-function formatDelta(kind, delta) {
+/** '+$120', '−$80', '+1', or a dash for no difference. Shared with the split view's delta bar. */
+export function formatDelta(kind, delta) {
   if (!delta) return '—'
   const sign = delta > 0 ? '+' : '−'
   const magnitude = kind === 'count' ? String(Math.abs(delta)) : formatDollars(Math.abs(delta))

@@ -61,7 +61,8 @@ export default function UnitBox({
 
   return (
     <div
-      onClick={handleBoxTap}
+      // read-only (print, the actual side of side by side) wires nothing at all
+      onClick={readOnly ? undefined : handleBoxTap}
       className={cx(
         'relative flex min-w-0 flex-col p-2 pb-3',
         !readOnly && 'cursor-pointer',
