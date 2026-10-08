@@ -33,7 +33,15 @@
 //              amount: dollars this record is about (defaults to the rent
 //                      at the time of marking; never rewritten afterwards)
 //              paidOn: 'YYYY-MM-DD' or null;  note: free text
-//   Bill     { id, label, amount, cadence, dueDay, paid } // cadence: 'monthly'|'yearly'|'once'
+//   Bill     { id, label, amount, cadence, dueDay, paid, loan? } // cadence: 'monthly'|'yearly'|'once'
+//              loan: optional — absent or null means no loan terms, else a Loan
+//   Loan     { originalPrincipal, annualRatePercent, termMonths,
+//              firstPaymentDate, extraMonthlyPrincipal }
+//              firstPaymentDate: 'YYYY-MM-DD' local, or null. Only the terms
+//              are stored; every derived figure (P+I, balance, payoff) is
+//              computed for display in loans.js and never written back. The
+//              bill's own `amount` stays what was typed (it may include
+//              escrow). At most one bill per building carries a loan.
 //   Task     { id, text, done, createdAt }
 //   Note     { id, text, createdAt }
 //
@@ -96,7 +104,11 @@
 //     tenants, lease dates, list items, or notes. Actual buildings stay
 //     exactly where they are. Additive; a store without scenarios gets [].
 //     No migration step.
-export const SCHEMA_VERSION = 8
+// v9: + bill.loan, OPTIONAL: loan terms on a building bill (the mortgage).
+//     A bill with no `loan` key is exactly what it was — normalizeState never
+//     adds one, so every stored bill keeps its bytes. A stored loan is
+//     normalized in place and its unknown fields kept. No migration step.
+export const SCHEMA_VERSION = 9
 
 /** The portfolio every pre-v6 store's buildings are gathered into. */
 export const DEFAULT_PORTFOLIO_NAME = 'My properties'
@@ -200,7 +212,7 @@ export function makeTask(fields = {}) {
 }
 
 export function makeBill(fields = {}) {
-  return {
+  const bill = {
     id: newId('bill'),
     label: '',
     amount: 0,
@@ -211,6 +223,50 @@ export function makeBill(fields = {}) {
     // normalize after the spread so a caller can never hand us NaN
     amount: toAmount(fields.amount),
   }
+  // loan terms are optional: a bill without the key never gains one
+  if (Object.prototype.hasOwnProperty.call(fields, 'loan')) bill.loan = asLoan(fields.loan)
+  return bill
+}
+
+/** True for a stored day string, 'YYYY-MM-DD'. Whether it is a real day is loans.js's call. */
+export function isDayKey(v) {
+  return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)
+}
+
+/** Whole months, never negative, never NaN. Junk means 0. */
+export function toMonths(value) {
+  const n = Math.trunc(toAmount(value))
+  return n > 0 ? n : 0
+}
+
+/** A percentage as typed: '6.5', '6.5%', 6.5. Junk means 0. */
+export function toPercent(value) {
+  return toAmount(typeof value === 'string' ? value.replace(/%/g, '') : value)
+}
+
+/**
+ * Loan terms on a bill, every field present, unknown fields kept. Only the
+ * terms: nothing derived (payment, balance, payoff) is ever stored here.
+ */
+export function makeLoan(fields = {}) {
+  return {
+    originalPrincipal: 0,
+    annualRatePercent: 0,
+    termMonths: 0,
+    firstPaymentDate: null, // 'YYYY-MM-DD' local, or null
+    extraMonthlyPrincipal: 0,
+    ...fields,
+    originalPrincipal: toAmount(fields.originalPrincipal),
+    annualRatePercent: toPercent(fields.annualRatePercent),
+    termMonths: toMonths(fields.termMonths),
+    firstPaymentDate: isDayKey(fields.firstPaymentDate) ? fields.firstPaymentDate : null,
+    extraMonthlyPrincipal: toAmount(fields.extraMonthlyPrincipal),
+  }
+}
+
+/** A bill's `loan`: normalized terms, or null for none. */
+export function asLoan(v) {
+  return isObject(v) ? makeLoan(v) : null
 }
 
 /**

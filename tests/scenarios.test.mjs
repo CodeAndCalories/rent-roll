@@ -523,7 +523,7 @@ test('scenarios survive save/load and export/import, and an import never removes
   assert.equal(save(state).ok, true)
   const back = load()
   assert.equal(back.state.version, SCHEMA_VERSION)
-  assert.equal(SCHEMA_VERSION, 8)
+  assert.equal(SCHEMA_VERSION, 9)
   assert.deepEqual(back.state.scenarios, state.scenarios)
   assert.equal(unitsOf(back.state.scenarios[0].properties)[0].rent, 4321)
 
@@ -570,7 +570,7 @@ test('a v7 store loads with an empty scenarios list and nothing else changed', (
 
   const r = load()
   assert.equal(r.from, 7)
-  assert.equal(r.state.version, 8)
+  assert.equal(r.state.version, 9)
   assert.equal(r.warnings.length, 0)
   assert.deepEqual(r.state.scenarios, [])
   assert.deepEqual(r.state.properties, stored.properties)
