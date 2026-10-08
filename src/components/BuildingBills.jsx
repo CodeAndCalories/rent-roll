@@ -167,15 +167,25 @@ function LoanBlock({ bill, property, onLoan }) {
             ariaLabel="First payment date"
           />
         </Field>
-        <Field label="Extra principal / mo" className="col-span-2">
-          <div className="w-32">
-            <RentInput
-              value={loan.extraMonthlyPrincipal}
-              onCommit={(extraMonthlyPrincipal) => set({ extraMonthlyPrincipal })}
-              ariaLabel="Extra principal per month"
-            />
-          </div>
+        <Field label="Extra principal / mo">
+          <RentInput
+            value={loan.extraMonthlyPrincipal}
+            onCommit={(extraMonthlyPrincipal) => set({ extraMonthlyPrincipal })}
+            ariaLabel="Extra principal per month"
+          />
         </Field>
+        {loan.extraMonthlyPrincipal > 0 && (
+          <Field label="Extra from">
+            <DateInput
+              value={loan.extraStartDate ?? null}
+              onChange={(extraStartDate) => set({ extraStartDate })}
+              ariaLabel="Extra principal goes in with payments due on or after"
+            />
+            {!loan.extraStartDate && (
+              <p className="mt-0.5 text-[9px] leading-snug text-line/50">From the first payment</p>
+            )}
+          </Field>
+        )}
       </div>
 
       <LoanEstimate bill={bill} />
@@ -243,7 +253,12 @@ function LoanEstimate({ bill }) {
         {s.extra && (
           <div className="mt-1.5 border-t border-line/20 pt-1.5">
             <div className="text-[9px] tracking-[0.2em] text-line/70 uppercase">
-              With {formatCents(s.extra.monthly)} / mo extra principal
+              With {formatCents(s.extra.monthly)} / mo extra principal ·{' '}
+              {s.extra.fromFirst
+                ? 'from the first payment'
+                : s.extra.startDate
+                  ? `from ${monthLabel(s.extra.startDate.slice(0, 7))}`
+                  : 'starting after the last payment'}
             </div>
             <Row
               label="Payoff"
@@ -260,8 +275,8 @@ function LoanEstimate({ bill }) {
       </div>
       <p className="mt-2 text-[9px] leading-relaxed text-line/50">
         Estimate only: standard amortization from the terms above, interest charged monthly and rounded to the
-        cent{s.extra ? ', the extra principal assumed with every payment from the first' : ''}. Payments count
-        when due on or before today. Not a lender statement.
+        cent{s.extra ? `, the extra principal ${extraWhen(s.extra)}` : ''}. Payments count when due on or before
+        today. Not a lender statement.
       </p>
     </div>
   )
@@ -304,6 +319,13 @@ function PercentInput({ value, onCommit }) {
       <span className="text-sm text-line/70">%</span>
     </label>
   )
+}
+
+/** When the estimate assumes the extra principal goes in, for the footnote. */
+function extraWhen(extra) {
+  if (extra.fromFirst) return 'assumed with every payment from the first'
+  if (extra.startDate) return `assumed with every payment from the one due ${extra.startDate}`
+  return 'starting after the last payment, so it changes nothing'
 }
 
 /** 30 -> "30", 7.5 -> "7.5", 2.333… -> "2.33". */

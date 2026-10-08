@@ -73,7 +73,7 @@ import {
   countScenario,
   scenarioView,
 } from './scenarios.js'
-import { loanBillCount, loanBillOf } from './loans.js'
+import { loanBillCount, loanBillOf, withExtraStart } from './loans.js'
 import { drawnUnits } from '../lib/widths.js'
 
 export class RuleError extends Error {
@@ -381,13 +381,18 @@ export function removePropertyBill(state, propertyId, billId) {
 /**
  * Put loan terms on a building bill, change some of them, or take them off.
  * `terms` is a partial Loan merged over what the bill has, or null to remove
- * the terms. Only the terms are stored. Refused with RuleError when another
- * bill of the building already carries a loan.
+ * the terms. Only the terms are stored. Extra principal entered where there
+ * was none starts with the next payment due after `today` unless `terms`
+ * names a start date (withExtraStart); a loan that already had extra with
+ * no start date keeps it from the first payment. Refused with RuleError
+ * when another bill of the building already carries a loan.
  */
-export function setBillLoan(state, propertyId, billId, terms) {
-  return patchPropertyBill(state, propertyId, billId, (b) => ({
-    loan: terms === null ? null : makeLoan({ ...(b.loan ?? {}), ...(terms ?? {}) }),
-  }))
+export function setBillLoan(state, propertyId, billId, terms, { today = new Date() } = {}) {
+  return patchPropertyBill(state, propertyId, billId, (b) => {
+    if (terms === null) return { loan: null }
+    const merged = { ...(b.loan ?? {}), ...(terms ?? {}) }
+    return { loan: makeLoan(withExtraStart(b.loan, terms, merged, today)) }
+  })
 }
 
 /** Add a building, into `portfolioId` or else the first portfolio. */

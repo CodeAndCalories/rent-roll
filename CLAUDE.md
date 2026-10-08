@@ -72,7 +72,10 @@ Payment { half, status, amount, paidOn, note }
 Bill  { id, label, amount, cadence, dueDay, paid, loan? }   // cadence: 'monthly'|'yearly'|'once'
   loan: OPTIONAL — absent or null is no loan terms; at most one per building
 Loan  { originalPrincipal, annualRatePercent, termMonths, firstPaymentDate,
-        extraMonthlyPrincipal }         // the TERMS only; firstPaymentDate 'YYYY-MM-DD' local or null
+        extraMonthlyPrincipal, extraStartDate? }
+                                        // the TERMS only; dates 'YYYY-MM-DD' local or null.
+                                        // extraStartDate OPTIONAL: absent / null = extra from
+                                        // the first payment
 Task  { id, text, done, createdAt }
 Note  { id, text, createdAt }
 ```
@@ -321,8 +324,20 @@ shows — never a parallel set. Writes go through `addPropertyBill` /
   payments made (due on or before today's LOCAL date — `dayKey`, never
   `toISOString`) and remaining; balance; interest to date; payoff
   (`dueDateOf` keeps the first payment's day, held to a shorter month's
-  end). Extra principal is assumed with every payment from the first, and
-  `extra` reports the standard payoff, months saved, and interest saved.
+  end). Extra principal goes in with every payment due on or after
+  `extraStartDate` (`extraFromIndex`) — or from the first payment when the
+  loan has none, which is how every loan stored before v10 keeps working.
+  `extra` reports when it starts (`fromFirst`, `startDate`), the standard
+  payoff, months saved, and interest saved.
+- **New extra starts with the next payment due.** `ops.setBillLoan(…, {
+  today })` runs `withExtraStart`: extra going from $0 to something gets
+  `extraStartDate = defaultExtraStart(loan, today)` — the first payment due
+  AFTER today (one due today counts as made), or tomorrow when there is no
+  first payment date yet, which reads the same once there is. A start date
+  named in the same change wins; changing an amount that was already
+  there keeps whatever the loan had (a legacy loan stays from the first
+  payment); $0 and back restarts from then. Imports and direct bill
+  patches store what they are given.
   Missing terms come back as `{ ok: false, missing }`, never NaN.
 - **The typed amount is never corrected.** `escrowSplit(bill, summary)`
   sets the bill's monthly amount beside P+I; the difference is labelled
@@ -600,7 +615,9 @@ stored amount).
   with the building's monthly figure on it): the building's bills in the
   unit panel's own `BillRow`, the monthly equivalent on top
   (`propertyBillsMonthly`). Each bill offers "+ Loan terms" until one bill
-  holds them; the loan block has the five terms, a two-tap "Remove terms",
+  holds them; the loan block has the five terms (plus "Extra from", a date
+  that reads "From the first payment" when empty, once there is extra), a
+  two-tap "Remove terms",
   and the estimate (P+I, your amount and "escrow / other" when they
   differ, payments made · left, balance now, interest to date, payoff, and
   with extra principal the earlier payoff and interest saved), labelled an

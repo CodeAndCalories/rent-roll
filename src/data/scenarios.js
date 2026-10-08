@@ -205,10 +205,13 @@ export function splitDeltas(actualProperties, scenarioProperties) {
 // beside the data (store.js, FORK_BASIS_KEY), never in it.
 // ---------------------------------------------------------------------------
 
-const projectLoan = (l) =>
-  l && typeof l === 'object'
-    ? [toAmount(l.originalPrincipal), toAmount(l.annualRatePercent), toAmount(l.termMonths), l.firstPaymentDate ?? null, toAmount(l.extraMonthlyPrincipal)]
-    : null
+// extraStartDate joins the projection only when the loan has the key, so
+// every basis taken before it existed still matches the loan it was taken of
+const projectLoan = (l) => {
+  if (!l || typeof l !== 'object') return null
+  const terms = [toAmount(l.originalPrincipal), toAmount(l.annualRatePercent), toAmount(l.termMonths), l.firstPaymentDate ?? null, toAmount(l.extraMonthlyPrincipal)]
+  return Object.prototype.hasOwnProperty.call(l, 'extraStartDate') ? [...terms, l.extraStartDate ?? null] : terms
+}
 
 const projectBill = (b) => [String(b.label ?? ''), toAmount(b.amount), b.cadence ?? '', b.dueDay ?? null, projectLoan(b.loan)]
 

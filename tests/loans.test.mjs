@@ -2,18 +2,24 @@
 // amortization against a known worked example (to the cent), the 0% edge,
 // extra principal shortening the term, payments to date counted on LOCAL
 // days — checked in a child process west of UTC, where a UTC "today" would
-// already be the next month — and the typed amount set beside P+I as
-// "escrow / other", never corrected. Run with:  npm test
+// already be the next month — the typed amount set beside P+I as
+// "escrow / other", never corrected, and when extra principal starts: from
+// the first payment for a loan with no start date (as it always was), from
+// the next payment due for extra entered now. Run with:  npm test
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { makeBill, makeLoan } from '../src/data/schema.js'
+import { makeBill, makeLoan, makeState } from '../src/data/schema.js'
+import { buildFromTemplate } from '../src/data/templates.js'
+import { setBillLoan } from '../src/data/ops.js'
 import {
   LOAN_MAX_MONTHS,
   amortizedPayment,
+  defaultExtraStart,
   dueDateOf,
   escrowSplit,
+  extraFromIndex,
   loanProblems,
   loanSummary,
   roundCents,
@@ -201,4 +207,117 @@ test('payments to date count LOCAL days: west of UTC the evening of the 30th is 
   // local calendar logic: the count follows the local day, whatever it is
   const here = loanSummary(LOAN, new Date(2026, 8, 30, 23, 30))
   assert.equal(here.made, 9)
+})
+
+// ---------------------------------------------------------------------------
+// when extra principal starts
+// ---------------------------------------------------------------------------
+
+const TODAY = new Date(2026, 9, 7, 12) // 7 Oct 2026: Jan–Oct payments made, Nov 1 is next
+
+/** A building whose Mortgage carries LOAN (no extra yet), and a setter that goes through ops. */
+function mortgaged(terms = LOAN) {
+  let state = makeState({ properties: [buildFromTemplate('single', 'Solo')] })
+  const p = state.properties[0]
+  const billId = p.bills.find((b) => b.label === 'Mortgage').id
+  const loanOf = (s) => s.properties[0].bills.find((b) => b.id === billId).loan
+  const set = (s, t, today = TODAY) => setBillLoan(s, p.id, billId, t, { today })
+  state = set(state, terms)
+  return { state, loanOf, set }
+}
+
+test('a loan with extra and no start date keeps it from the first payment, as before', () => {
+  // how every loan with extra principal was stored until now
+  const legacy = makeLoan({ ...LOAN, extraMonthlyPrincipal: 200 })
+  assert.equal('extraStartDate' in legacy, false)
+  assert.equal(extraFromIndex(legacy, 360), 0)
+  const s = loanSummary(legacy, TODAY)
+  assert.equal(s.extra.fromFirst, true)
+  assert.equal(s.extra.startDate, '2026-01-01')
+  // the same numbers this loan always gave: 277 payments, 83 months sooner
+  assert.equal(s.count, 277)
+  assert.equal(s.extra.monthsSaved, 83)
+  assert.equal(s.payoffDate, '2049-01-01')
+  const plain = loanSummary(LOAN, TODAY)
+  assert.equal(cents(plain.balance - s.balance) >= cents(200 * s.made), true, 'the extra is in the balance to date')
+
+  // a null start date reads the same way
+  assert.deepEqual(loanSummary({ ...legacy, extraStartDate: null }, TODAY), s)
+
+  // and changing the amount on such a loan does not move it to a start date
+  let { state, loanOf, set } = mortgaged({ ...LOAN, extraMonthlyPrincipal: 200 })
+  const stored = { ...loanOf(state) }
+  delete stored.extraStartDate // as the old app stored it
+  state = { ...state, properties: [{ ...state.properties[0], bills: state.properties[0].bills.map((b) => (b.loan ? { ...b, loan: stored } : b)) }] }
+  assert.equal('extraStartDate' in loanOf(state), false)
+  state = set(state, { extraMonthlyPrincipal: 300 })
+  assert.equal('extraStartDate' in loanOf(state), false, 'still from the first payment')
+  assert.equal(loanSummary(loanOf(state), TODAY).extra.fromFirst, true)
+})
+
+test('extra entered now starts with the next payment due; the balance to date is untouched', () => {
+  let { state, loanOf, set } = mortgaged()
+  assert.equal('extraStartDate' in loanOf(state), false, 'no extra, no start date')
+
+  state = set(state, { extraMonthlyPrincipal: 200 })
+  assert.equal(loanOf(state).extraStartDate, '2026-11-01', 'the next payment due after 7 Oct')
+  assert.equal(extraFromIndex(loanOf(state), 360), 10)
+
+  const plain = loanSummary(LOAN, TODAY)
+  const retro = loanSummary({ ...LOAN, extraMonthlyPrincipal: 200 }, TODAY)
+  const s = loanSummary(loanOf(state), TODAY)
+  assert.equal(s.extra.fromFirst, false)
+  assert.equal(s.extra.startDate, '2026-11-01')
+  assert.equal(s.made, 10)
+  assert.equal(s.balance, plain.balance, 'nothing extra has been paid yet')
+  assert.equal(s.interestToDate, plain.interestToDate)
+  assert.ok(s.count < plain.count && s.count > retro.count, `${retro.count} < ${s.count} < ${plain.count}`)
+  assert.ok(s.extra.interestSaved > 0 && s.extra.interestSaved < retro.extra.interestSaved)
+  assert.equal(s.extra.monthsSaved, plain.count - s.count)
+
+  // a later look, after it has started: November's payment carried it
+  const later = loanSummary(loanOf(state), new Date(2026, 11, 15))
+  assert.equal(later.made, 12)
+  assert.equal(cents(plain.balance - later.balance) > 0, true)
+
+  // changing the amount keeps the start; taking it to 0 and back restarts it from then
+  state = set(state, { extraMonthlyPrincipal: 250 })
+  assert.equal(loanOf(state).extraStartDate, '2026-11-01')
+  state = set(state, { extraMonthlyPrincipal: 0 })
+  state = set(state, { extraMonthlyPrincipal: 100 }, new Date(2027, 2, 20))
+  assert.equal(loanOf(state).extraStartDate, '2027-04-01')
+
+  // a start date named in the same change wins; one picked later stays as picked
+  const named = mortgaged()
+  const n1 = named.set(named.state, { extraMonthlyPrincipal: 200, extraStartDate: '2027-06-15' })
+  assert.equal(named.loanOf(n1).extraStartDate, '2027-06-15')
+  assert.equal(loanSummary(named.loanOf(n1), TODAY).extra.startDate, '2027-07-01', 'the first payment due on or after it')
+  const n2 = named.set(n1, { extraStartDate: null })
+  assert.equal(named.loanOf(n2).extraStartDate, null)
+  assert.equal(loanSummary(named.loanOf(n2), TODAY).extra.fromFirst, true, 'cleared: from the first payment')
+})
+
+test('the default start: a payment due today is already made; no date yet means tomorrow', () => {
+  // due today (1 Nov) counts as made, so the next one is December's
+  assert.equal(defaultExtraStart(LOAN, new Date(2026, 10, 1, 8)), '2026-12-01')
+  assert.equal(defaultExtraStart(LOAN, new Date(2026, 9, 31, 23, 59)), '2026-11-01')
+  // a loan that has not started yet: its first payment
+  assert.equal(defaultExtraStart({ ...LOAN, firstPaymentDate: '2027-02-01' }, TODAY), '2027-02-01')
+  // no first payment date: tomorrow, which places it once the date is known
+  const undated = makeLoan({ originalPrincipal: 300000, annualRatePercent: 6.5, termMonths: 360 })
+  assert.equal(defaultExtraStart(undated, TODAY), '2026-10-08')
+  assert.equal(defaultExtraStart(undated, new Date(2026, 11, 31, 22)), '2027-01-01', 'across a year')
+  // paid off already: tomorrow, and the estimate says it changes nothing
+  assert.equal(defaultExtraStart(LOAN, new Date(2060, 0, 1)), '2060-01-02')
+  const late = loanSummary({ ...LOAN, extraMonthlyPrincipal: 200, extraStartDate: '2060-01-02' }, TODAY)
+  assert.equal(late.extra.monthsSaved, 0)
+  assert.equal(late.extra.interestSaved, 0)
+  assert.equal(late.extra.startDate, null)
+
+  // the undated default, once the first payment date is entered, means the next payment due
+  let { state, loanOf, set } = mortgaged(undated)
+  state = set(state, { extraMonthlyPrincipal: 200 })
+  assert.equal(loanOf(state).extraStartDate, '2026-10-08')
+  state = set(state, { firstPaymentDate: '2026-01-01' })
+  assert.equal(loanSummary(loanOf(state), TODAY).extra.startDate, '2026-11-01')
 })

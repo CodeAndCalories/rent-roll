@@ -16,10 +16,14 @@
 // by a stray fraction. Dates are local calendar days ('YYYY-MM-DD'); "to
 // date" means every scheduled payment due on or before today's LOCAL date.
 //
-// Extra principal is assumed to go in with every payment from the first,
-// so the balance, the payments left, and the payoff date all follow the
-// schedule WITH it; "interest saved" and "months saved" compare that with
-// the same loan without it.
+// Extra principal goes in with every payment due on or after the loan's
+// extraStartDate — or with every payment from the first when it has none
+// (how every loan worked before the start date existed, kept so nothing
+// changes underneath one). New extra principal starts with the next
+// payment due (withExtraStart, applied by ops.setBillLoan). The balance,
+// the payments left, and the payoff date all follow the schedule WITH the
+// extra; "interest saved" and "months saved" compare that with the same
+// loan without it.
 
 import { isObject, toAmount } from './schema.js'
 import { billMonthly } from './totals.js'
@@ -114,13 +118,13 @@ function daysInMonth(year, month) {
  * cents owing. Returns { rows, interest } (cents), or null when the
  * payment cannot cover the interest.
  */
-function runSchedule(principalCents, r, paymentCents, extraCents, termMonths) {
+function runSchedule(principalCents, r, paymentCents, extraCents, termMonths, extraFrom = 0) {
   let balance = principalCents
   let interestTotal = 0
   const rows = []
   for (let k = 0; balance > 0 && k < termMonths; k++) {
     const interest = Math.round(balance * r)
-    let principal = paymentCents - interest + extraCents
+    let principal = paymentCents - interest + (k >= extraFrom ? extraCents : 0)
     if (principal <= 0) return null
     if (principal >= balance || k === termMonths - 1) principal = balance
     balance -= principal
@@ -128,6 +132,58 @@ function runSchedule(principalCents, r, paymentCents, extraCents, termMonths) {
     rows.push({ interest, principal, balance })
   }
   return balance === 0 ? { rows, interest: interestTotal } : null
+}
+
+/**
+ * The index of the first payment that carries the extra principal: the
+ * first one due on or after extraStartDate. 0 — from the first payment —
+ * when the loan has no start date, or no first payment date to place one
+ * against. At most `termMonths` (a start past the last payment: never).
+ */
+export function extraFromIndex(loan, termMonths) {
+  const first = loan?.firstPaymentDate
+  const start = loan?.extraStartDate
+  if (parseDay(first) == null || parseDay(start) == null) return 0
+  let k = 0
+  while (k < termMonths && dueDateOf(first, k) < start) k += 1
+  return k
+}
+
+/**
+ * Where newly entered extra principal starts: the next payment due after
+ * today (local) — a payment due today counts as made already. Without a
+ * first payment date (or with every payment behind it), tomorrow, which
+ * reads the same once the date is known: the first payment due after today.
+ */
+export function defaultExtraStart(loan, today = new Date()) {
+  const todayKey = dayKey(today)
+  const first = loan?.firstPaymentDate
+  if (parseDay(first) != null) {
+    const n = Math.trunc(toAmount(loan.termMonths))
+    const last = n >= 1 ? Math.min(n, LOAN_MAX_MONTHS) : LOAN_MAX_MONTHS
+    for (let k = 0; k < last; k++) {
+      const due = dueDateOf(first, k)
+      if (due > todayKey) return due
+    }
+  }
+  return dayKey(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1))
+}
+
+/**
+ * The loan to store when `terms` (what the user just changed) land on
+ * `before` (the loan as it was), merged as `merged`. Extra principal going
+ * from nothing to something starts with the next payment due
+ * (defaultExtraStart) unless the same change names a start date. Anything
+ * else is left as it is — in particular a loan that already had extra and
+ * no start date keeps it from the first payment, even when the amount is
+ * changed. One explicit user action, never a background fill.
+ */
+export function withExtraStart(before, terms, merged, today = new Date()) {
+  if (terms && Object.prototype.hasOwnProperty.call(terms, 'extraStartDate')) return merged
+  const was = toAmount(before?.extraMonthlyPrincipal)
+  const now = toAmount(merged?.extraMonthlyPrincipal)
+  if (was > 0 || !(now > 0)) return merged
+  return { ...merged, extraStartDate: defaultExtraStart(merged, today) }
 }
 
 /** What a loan is missing before it can be estimated: [] when it is ready. */
@@ -159,9 +215,11 @@ export function loanProblems(loan) {
  *   interestToDate  interest in those payments
  *   payoffDate      the last payment's due day
  *   extra           null without extra principal, else { monthly,
- *                   standardCount, standardPayoffDate, monthsSaved,
- *                   interestSaved }: the same loan without the extra,
- *                   and what the extra changes
+ *                   fromFirst, startDate, standardCount,
+ *                   standardPayoffDate, monthsSaved, interestSaved }:
+ *                   when the extra starts (fromFirst, or the due day of
+ *                   the first payment carrying it), the same loan without
+ *                   the extra, and what the extra changes
  */
 export function loanSummary(loan, today = new Date()) {
   const missing = loanProblems(loan)
@@ -174,8 +232,10 @@ export function loanSummary(loan, today = new Date()) {
   const paymentCents = Math.round(payment * 100)
   const extraCents = Math.round(toAmount(loan.extraMonthlyPrincipal) * 100)
 
+  const extraFrom = extraFromIndex(loan, termMonths)
   const standard = runSchedule(principalCents, r, paymentCents, 0, termMonths)
-  const schedule = extraCents > 0 ? runSchedule(principalCents, r, paymentCents, extraCents, termMonths) : standard
+  const schedule =
+    extraCents > 0 ? runSchedule(principalCents, r, paymentCents, extraCents, termMonths, extraFrom) : standard
   if (!standard || !schedule) return { ok: false, missing: ['terms that pay the loan down'] }
 
   const first = loan.firstPaymentDate
@@ -218,6 +278,8 @@ export function loanSummary(loan, today = new Date()) {
       extraCents > 0
         ? {
             monthly: extraCents / 100,
+            fromFirst: extraFrom === 0,
+            startDate: dated && extraFrom < termMonths ? dueDateOf(first, extraFrom) : null,
             standardCount: standard.rows.length,
             standardPayoffDate: dated ? dueDateOf(first, standard.rows.length - 1) : null,
             monthsSaved: standard.rows.length - count,
