@@ -56,6 +56,7 @@ import {
   makeLoan,
   makePayment,
   makeUnit,
+  nowISO,
   paymentKey,
   stripForScenario,
   toAmount,
@@ -63,7 +64,14 @@ import {
   withPortfolios,
 } from './schema.js'
 import { countPayments, defaultAmountFor, nextPaymentStatus } from './payments.js'
-import { SCENARIO_CAP, SCENARIO_CAP_REASON, countScenario, scenarioView } from './scenarios.js'
+import {
+  SCENARIO_CAP,
+  SCENARIO_CAP_REASON,
+  actualBuildings,
+  cloneForScenario,
+  countScenario,
+  scenarioView,
+} from './scenarios.js'
 import { loanBillCount, loanBillOf } from './loans.js'
 import { drawnUnits } from '../lib/widths.js'
 
@@ -522,6 +530,27 @@ export function addScenario(state, scenario) {
     )
   }
   return { ...state, scenarios: [...(state.scenarios ?? []), scenario] }
+}
+
+/**
+ * "Refresh from actual": re-fork a scenario from its portfolio's buildings
+ * as they are now. The scenario keeps its id, name, note, and portfolio;
+ * its buildings are replaced by fresh copies (new ids, nothing factual) and
+ * `createdAt` becomes `at`, since it is now a snapshot from then. Every
+ * edit made in it is gone — the UI's two-tap confirm says so. Actual
+ * buildings, portfolios, and every other scenario are the very same
+ * objects afterwards. An unknown scenario is refused with RuleError.
+ */
+export function refreshScenario(state, scenarioId, { at = nowISO() } = {}) {
+  const list = state.scenarios ?? []
+  const scenario = list.find((s) => s.id === scenarioId)
+  if (!scenario) {
+    throw new RuleError('That scenario no longer exists. Exit scenario mode and try again.', 'no-scenario')
+  }
+  const buildings = actualBuildings(state, scenario.portfolioId)
+  if (!buildings) throw new RuleError('That scenario’s portfolio no longer exists.', 'no-portfolio')
+  const refreshed = { ...scenario, createdAt: at, properties: buildings.map(cloneForScenario) }
+  return { ...state, scenarios: list.map((s) => (s.id === scenarioId ? refreshed : s)) }
 }
 
 /** Rename a scenario or change its note. Only those two fields; never its buildings. */

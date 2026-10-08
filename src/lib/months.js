@@ -65,6 +65,11 @@ export function compareMonths(a, b) {
   return a < b ? -1 : a > b ? 1 : 0
 }
 
+/** A local calendar day as 'Oct 7, 2026' — the same in every locale. Defaults to today. */
+export function dayLabel(date = new Date()) {
+  return `${SHORT[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`
+}
+
 /** 'Sep 2026', or 'September 2026' with { long: true }. */
 export function monthLabel(key, { long = false } = {}) {
   const p = parseMonth(key)

@@ -11,8 +11,9 @@
 // records, no tenants, no lease dates, no list items, no notes. From the
 // fork on, the two are independent.
 
-import { makeScenario, newId, stripForScenario } from './schema.js'
+import { makeScenario, newId, stripForScenario, toAmount, toWeight } from './schema.js'
 import { computeTotals } from './totals.js'
+import { dayLabel } from '../lib/months.js'
 
 /** How many scenarios one portfolio may hold, and why. */
 export const SCENARIO_CAP = 6
@@ -51,14 +52,17 @@ export function cloneForScenario(property) {
  * ops.addScenario, which enforces the cap.
  */
 export function forkScenario(state, portfolioId, { name = '', note = '' } = {}) {
+  const buildings = actualBuildings(state, portfolioId)
+  if (!buildings) return null
+  return makeScenario({ portfolioId, name, note, properties: buildings.map(cloneForScenario) })
+}
+
+/** A portfolio's actual buildings in its order, or null for an unknown portfolio. */
+export function actualBuildings(state, portfolioId) {
   const portfolio = (state?.portfolios ?? []).find((f) => f.id === portfolioId)
   if (!portfolio) return null
   const byId = new Map((state.properties ?? []).map((p) => [p.id, p]))
-  const properties = portfolio.propertyIds
-    .map((id) => byId.get(id))
-    .filter(Boolean)
-    .map(cloneForScenario)
-  return makeScenario({ portfolioId, name, note, properties })
+  return portfolio.propertyIds.map((id) => byId.get(id)).filter(Boolean)
 }
 
 /**
@@ -132,4 +136,130 @@ export function compareTable(actualProperties, scenarios) {
     }),
   }))
   return { columns, rows }
+}
+
+// ---------------------------------------------------------------------------
+// side by side — actual on one side, a scenario on the other
+// ---------------------------------------------------------------------------
+
+/** The figures the split view's delta bar shows, in order. */
+export const DELTA_ROWS = ['collected', 'bills', 'net', 'annualNet']
+
+/**
+ * The name an automatic fork gets: "What-if Oct 7, 2026", with " (2)",
+ * " (3)"… when the portfolio already has one by that name.
+ */
+export function whatIfName(now = new Date(), taken = []) {
+  const base = `What-if ${dayLabel(now)}`
+  const names = new Set(taken)
+  if (!names.has(base)) return base
+  let n = 2
+  while (names.has(`${base} (${n})`)) n += 1
+  return `${base} (${n})`
+}
+
+/**
+ * What the "Side by side" control does for a portfolio. With no scenario
+ * there is nothing to ask: fork one, named by whatIfName. Otherwise ask
+ * which goes on the right, "+ new fork" first — refused, with the reason,
+ * at the cap.
+ *   { action: 'fork', name }
+ *   { action: 'pick', newFork: { name, ok, reason }, scenarios }
+ */
+export function planSideBySide(state, portfolioId, now = new Date()) {
+  const list = scenariosOf(state, portfolioId)
+  const name = whatIfName(now, list.map((s) => s.name))
+  if (list.length === 0) return { action: 'fork', name }
+  const full = list.length >= SCENARIO_CAP
+  return {
+    action: 'pick',
+    newFork: { name, ok: !full, reason: full ? SCENARIO_CAP_REASON : null },
+    scenarios: list,
+  }
+}
+
+/**
+ * The delta bar: for each of DELTA_ROWS, both sides' own computeTotals
+ * figure and scenario − actual, toned amber when better and alert when
+ * worse. Built on compareTable, so it is the same arithmetic as Compare.
+ */
+export function splitDeltas(actualProperties, scenarioProperties) {
+  const { rows } = compareTable(actualProperties, [{ id: 'right', properties: scenarioProperties }])
+  return DELTA_ROWS.map((id) => {
+    const row = rows.find((r) => r.id === id)
+    const [a, s] = row.cells
+    return { id, label: row.label, actual: a.value, scenario: s.value, delta: s.delta, tone: s.tone }
+  })
+}
+
+// ---------------------------------------------------------------------------
+// staleness — has actual changed since the fork?
+//
+// A signature is a short hash of exactly what a fork copies and a scenario
+// can differ by: names, addresses, roofs, floors, units (position, width,
+// rent, status, splits, side), and bills with any loan terms — no ids, and
+// none of what a scenario never holds (photos, payments, tenants, lease
+// dates, list items, notes) or what changes month to month (a bill's paid
+// box). Taken from actual at the fork, it is compared with actual now; a
+// scenario's own edits never enter into it. The fork's signature is kept
+// beside the data (store.js, FORK_BASIS_KEY), never in it.
+// ---------------------------------------------------------------------------
+
+const projectLoan = (l) =>
+  l && typeof l === 'object'
+    ? [toAmount(l.originalPrincipal), toAmount(l.annualRatePercent), toAmount(l.termMonths), l.firstPaymentDate ?? null, toAmount(l.extraMonthlyPrincipal)]
+    : null
+
+const projectBill = (b) => [String(b.label ?? ''), toAmount(b.amount), b.cadence ?? '', b.dueDay ?? null, projectLoan(b.loan)]
+
+const projectUnit = (u) => [
+  String(u.name ?? ''),
+  u.position ?? '',
+  toWeight(u.widthWeight),
+  toAmount(u.rent),
+  u.status ?? '',
+  Boolean(u.splittable),
+  Boolean(u.isSplit),
+  toAmount(u.splitRent),
+  u.sideOf ?? '',
+  (u.bills ?? []).map(projectBill),
+]
+
+const projectProperty = (p) => [
+  String(p.name ?? ''),
+  String(p.address ?? ''),
+  p.shape ?? '',
+  (p.floors ?? []).map((f) => [String(f.label ?? ''), (f.units ?? []).map(projectUnit)]),
+  (p.bills ?? []).map(projectBill),
+]
+
+/**
+ * The signature of some buildings: 8 hex digits (FNV-1a over the
+ * projection). Equal for actual and a fresh fork of it, since the fork
+ * differs only in ids and facts.
+ */
+export function forkSignature(properties) {
+  const text = JSON.stringify((Array.isArray(properties) ? properties : []).map(projectProperty))
+  let h = 0x811c9dc5
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return (h >>> 0).toString(16).padStart(8, '0')
+}
+
+/** The signature of a portfolio's actual buildings right now. */
+export function actualSignature(state, portfolioId) {
+  return forkSignature(actualBuildings(state, portfolioId) ?? [])
+}
+
+/**
+ * Has actual changed since this scenario was forked (or refreshed)?
+ * `basis` is the signature taken then. true / false, or null when there is
+ * no basis to go by (a scenario from before this was kept, or one that
+ * came in through an import) — then the marker stays quiet.
+ */
+export function isStale(state, scenario, basis) {
+  if (!scenario || typeof basis !== 'string' || basis === '') return null
+  return basis !== actualSignature(state, scenario.portfolioId)
 }

@@ -484,6 +484,54 @@ function mergeScenario(ex, inc) {
 }
 
 // ---------------------------------------------------------------------------
+// fork basis — a cache beside the data, never part of it
+//
+// What actual looked like when each scenario was forked or refreshed, as
+// the short signature from scenarios.js (forkSignature), so the split view
+// can say "actual changed since this fork". It lives under its own key:
+// load() never reads it, save() never writes it, export and import never
+// carry it, and nothing in 'rentroll:v1' changes shape. Losing it costs
+// only the marker (isStale says null — unknown — and stays quiet).
+// ---------------------------------------------------------------------------
+
+export const FORK_BASIS_KEY = 'rentroll:fork-basis'
+
+/** { [scenarioId]: signature }. Unreadable or missing means {}. Never throws. */
+export function loadForkBases() {
+  const ls = getStorage()
+  if (!ls) return {}
+  try {
+    const v = JSON.parse(ls.getItem(FORK_BASIS_KEY) ?? '{}')
+    if (!isObject(v)) return {}
+    const out = {}
+    for (const [id, sig] of Object.entries(v)) if (typeof sig === 'string') out[id] = sig
+    return out
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * Record a scenario's signature, dropping entries for scenarios that no
+ * longer exist (`keepIds`, when given). Returns the map as it now stands,
+ * written or not. Never throws.
+ */
+export function saveForkBasis(scenarioId, signature, keepIds = null) {
+  const next = { ...loadForkBases(), [scenarioId]: signature }
+  if (Array.isArray(keepIds)) {
+    const keep = new Set([...keepIds, scenarioId])
+    for (const id of Object.keys(next)) if (!keep.has(id)) delete next[id]
+  }
+  const ls = getStorage()
+  try {
+    ls?.setItem(FORK_BASIS_KEY, JSON.stringify(next))
+  } catch {
+    // out of quota: the marker just has nothing to go by for this scenario
+  }
+  return next
+}
+
+// ---------------------------------------------------------------------------
 // storage access
 // ---------------------------------------------------------------------------
 
