@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { load, loadForkBases, save, saveForkBasis } from './data/store.js'
+import { load, save } from './data/store.js'
 import { formatDollars, makeBill, makePortfolio } from './data/schema.js'
 import {
   ACTUAL,
@@ -39,7 +39,6 @@ import {
 import { buildFromTemplate } from './data/templates.js'
 import { computeTotals } from './data/totals.js'
 import {
-  actualSignature,
   compareTable,
   countScenario,
   forkScenario,
@@ -105,9 +104,6 @@ export default function App() {
   // top of scenario mode — every write still aims at the scenario.
   const [split, setSplit] = useState(false)
   const [actualCollapsed, setActualCollapsed] = useState(false) // the actual pane shows totals only
-  // What actual looked like at each fork, for "actual changed since" — a
-  // cache beside the data (store.js FORK_BASIS_KEY), never part of it.
-  const [bases, setBases] = useState(() => loadForkBases())
   const [savedAt, setSavedAt] = useState(null) // timestamp of the last good write
 
   // Latest state for callbacks that need to read it outside a render
@@ -345,7 +341,6 @@ export default function App() {
         return
       }
       writeActual((cur) => opsAddScenario(cur, scenario))
-      setBases(saveForkBasis(scenario.id, actualSignature(s, into), (next.scenarios ?? []).map((x) => x.id)))
       setScenarioId(scenario.id)
       if (intoSplit) setSplit(true) // a fork made while side by side stays side by side
       setSelected(null)
@@ -420,7 +415,6 @@ export default function App() {
       }
       writeActual((cur) => opsRefreshScenario(cur, id, { at }))
       const refreshed = scenarioById(next, id)
-      setBases(saveForkBasis(id, actualSignature(s, refreshed.portfolioId), (next.scenarios ?? []).map((x) => x.id)))
       setOpenUnitId(null)
       setUndo(null)
       const c = countScenario(refreshed)
@@ -636,7 +630,7 @@ export default function App() {
   const displayed = displayedProperties(inPortfolio, selection)
   const showing = selection === ALL ? null : displayed[0]?.name || 'Building'
   const splitOn = split && Boolean(scenario)
-  const stale = scenario ? isStale(state, scenario, bases[scenario.id]) : null
+  const stale = scenario ? isStale(state, scenario) : null // its forkBasis against actual now
   const sideBySidePlan = dialog === 'sidebyside' ? planSideBySide(state, activeId) : null
 
   // The editor's handlers: the sheet, and the scenario side of side by side.
@@ -806,7 +800,7 @@ export default function App() {
           plan={sideBySidePlan}
           portfolioName={portfolioName}
           currentId={scenarioId}
-          staleOf={(s) => isStale(state, s, bases[s.id])}
+          staleOf={(s) => isStale(state, s)}
           onNewFork={newForkSideBySide}
           onPick={pickSideBySide}
           onClose={closeDialog}

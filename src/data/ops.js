@@ -71,6 +71,7 @@ import {
   actualBuildings,
   cloneForScenario,
   countScenario,
+  forkSignature,
   scenarioView,
 } from './scenarios.js'
 import { loanBillCount, loanBillOf, withExtraStart } from './loans.js'
@@ -541,8 +542,9 @@ export function addScenario(state, scenario) {
 /**
  * "Refresh from actual": re-fork a scenario from its portfolio's buildings
  * as they are now. The scenario keeps its id, name, note, and portfolio;
- * its buildings are replaced by fresh copies (new ids, nothing factual) and
- * `createdAt` becomes `at`, since it is now a snapshot from then. Every
+ * its buildings are replaced by fresh copies (new ids, nothing factual),
+ * `createdAt` becomes `at`, since it is now a snapshot from then, and
+ * `forkBasis` becomes the signature of actual as copied. Every
  * edit made in it is gone — the UI's two-tap confirm says so. Actual
  * buildings, portfolios, and every other scenario are the very same
  * objects afterwards. An unknown scenario is refused with RuleError.
@@ -555,7 +557,12 @@ export function refreshScenario(state, scenarioId, { at = nowISO() } = {}) {
   }
   const buildings = actualBuildings(state, scenario.portfolioId)
   if (!buildings) throw new RuleError('That scenario’s portfolio no longer exists.', 'no-portfolio')
-  const refreshed = { ...scenario, createdAt: at, properties: buildings.map(cloneForScenario) }
+  const refreshed = {
+    ...scenario,
+    createdAt: at,
+    properties: buildings.map(cloneForScenario),
+    forkBasis: forkSignature(buildings),
+  }
   return { ...state, scenarios: list.map((s) => (s.id === scenarioId ? refreshed : s)) }
 }
 

@@ -4,8 +4,10 @@
 // delta bar is each side's own computeTotals subtracted; "Refresh from
 // actual" replaces a scenario's content and keeps its id and name; the
 // "actual changed since this fork" marker follows real edits and only real
-// edits; and a whole editing session on the scenario side leaves every
-// actual object identical by reference. Run with:  npm test
+// edits, its basis living on the scenario through backups and imports and
+// moved there from the old side cache; and a whole editing session on the
+// scenario side leaves every actual object identical by reference.
+// Run with:  npm test
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -13,7 +15,7 @@ import './support/jsx.mjs'
 import { createElement as h } from 'react'
 import { renderToString } from 'react-dom/server'
 import { makeBill, makeState } from '../src/data/schema.js'
-import { FORK_BASIS_KEY, STORAGE_KEY, loadForkBases, load, save, saveForkBasis } from '../src/data/store.js'
+import { LEGACY_FORK_BASIS_KEY, STORAGE_KEY, adoptForkBases, importJSON, load, save, serialize } from '../src/data/store.js'
 import { buildFromTemplate } from '../src/data/templates.js'
 import {
   RuleError,
@@ -312,25 +314,20 @@ test('refresh from actual replaces the content and keeps the id and the name', (
 })
 
 test('the stale marker appears after a real edit — and only a real one', () => {
-  localStorage.removeItem(STORAGE_KEY)
-  localStorage.removeItem(FORK_BASIS_KEY)
   const first = forkLikeTheControl(realSheet())
   let state = first.state
   const sid = first.scenario.id
   const pid = state.portfolios[0].id
 
-  // the fork's basis is kept beside the data, not in it
-  let bases = saveForkBasis(sid, actualSignature(state, pid), state.scenarios.map((s) => s.id))
-  assert.deepEqual(loadForkBases(), bases)
-  assert.equal(localStorage.getItem(STORAGE_KEY), null, 'rentroll:v1 untouched by the basis')
-  assert.equal(save(state).ok, true)
-  assert.ok(!('forkBasis' in load().state) && !JSON.stringify(load().state).includes(bases[sid]), 'and not in the saved state')
-  const stale = () => isStale(state, scenarioById(state, sid), bases[sid])
+  // the fork takes its basis from actual as it copied it, on the scenario
+  assert.equal(scenarioById(state, sid).forkBasis, actualSignature(state, pid))
+  const stale = () => isStale(state, scenarioById(state, sid))
   assert.equal(stale(), false)
 
   // editing the scenario never makes it stale
   const su = unitsOf(scenarioById(state, sid).properties)[0]
   state = applyTo(state, scenarioTarget(sid), (s) => patchUnit(s, su.id, { rent: 4321 }))
+  assert.equal(scenarioById(state, sid).forkBasis, first.scenario.forkBasis, 'an edit keeps the basis')
   assert.equal(stale(), false)
 
   // facts a scenario never holds do not either: a payment, a tenant, a note, a bill's paid box
@@ -350,15 +347,78 @@ test('the stale marker appears after a real edit — and only a real one', () =>
 
   // refreshing takes a new basis, and the marker goes
   state = refreshScenario(state, sid)
-  bases = saveForkBasis(sid, actualSignature(state, pid), state.scenarios.map((s) => s.id))
+  assert.equal(scenarioById(state, sid).forkBasis, actualSignature(state, pid))
   assert.equal(stale(), false)
 
-  // no basis (an older or imported scenario): unknown, and quiet
-  assert.equal(isStale(state, scenarioById(state, sid), undefined), null)
-  assert.doesNotMatch(renderSplit(state, scenarioById(state, sid), { stale: null }), /Actual has changed/)
+  // no basis (forked before bases were kept, never refreshed): unknown, and quiet
+  const { forkBasis, ...without } = scenarioById(state, sid)
+  assert.equal(typeof forkBasis, 'string')
+  assert.equal(isStale(state, without), null)
+  assert.equal(isStale(state, { ...without, forkBasis: null }), null)
+  assert.doesNotMatch(renderSplit(state, without, { stale: isStale(state, without) }), /Actual has changed/)
+})
 
-  // a deleted scenario's basis is dropped on the next write
-  assert.deepEqual(Object.keys(saveForkBasis('other', 'abcd1234', ['other'])), ['other'])
+test('the basis rides with the scenario through a save, a reload, and a backup', async () => {
+  localStorage.removeItem(STORAGE_KEY)
+  localStorage.removeItem(LEGACY_FORK_BASIS_KEY)
+  const first = forkLikeTheControl(realSheet())
+  let state = first.state
+  const sid = first.scenario.id
+  const basis = scenarioById(state, sid).forkBasis
+  assert.match(basis, /^[0-9a-f]{8}$/)
+
+  assert.equal(save(state).ok, true)
+  assert.equal(scenarioById(load().state, sid).forkBasis, basis, 'in rentroll:v1 itself')
+  assert.equal(localStorage.getItem(LEGACY_FORK_BASIS_KEY), null, 'and nothing beside it')
+
+  // a backup restored into a fresh sheet still knows when actual moves on
+  const restored = (await importJSON(serialize(state), makeState({ properties: [] }))).state
+  assert.equal(scenarioById(restored, sid).forkBasis, basis)
+  assert.equal(isStale(restored, scenarioById(restored, sid)), false)
+  const changed = patchUnit(restored, unitsOf(restored.properties)[0].id, { rent: 1 })
+  assert.equal(isStale(changed, scenarioById(changed, sid)), true)
+
+  // an older backup without bases never wipes the one this sheet has
+  const old = JSON.parse(serialize(state))
+  delete old.scenarios[0].forkBasis
+  const merged = (await importJSON(JSON.stringify(old), state)).state
+  assert.equal(scenarioById(merged, sid).forkBasis, basis)
+})
+
+test('bases in the old rentroll:fork-basis cache move into their scenarios, then the key goes', () => {
+  localStorage.removeItem(STORAGE_KEY)
+  localStorage.removeItem(LEGACY_FORK_BASIS_KEY)
+  // a v9 store with two scenarios and no bases on them, as the last version wrote it
+  const one = forkLikeTheControl(realSheet())
+  const two = forkLikeTheControl(one.state)
+  const stored = JSON.parse(serialize(two.state))
+  stored.version = 9
+  for (const sc of stored.scenarios) delete sc.forkBasis
+  const [s1, s2] = stored.scenarios
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
+  // the cache knew the first one only (the second came in by import, say), plus a deleted one
+  const cached = one.scenario.forkBasis
+  localStorage.setItem(LEGACY_FORK_BASIS_KEY, JSON.stringify({ [s1.id]: cached, gone: 'deadbeef' }))
+
+  const r = load()
+  assert.equal(scenarioById(r.state, s1.id).forkBasis, cached, 'adopted from the cache')
+  assert.equal('forkBasis' in scenarioById(r.state, s2.id), false, 'not invented: no marker until refreshed')
+  assert.equal(isStale(r.state, scenarioById(r.state, s2.id)), null)
+  assert.deepEqual(scenarioById(r.state, s1.id).properties, s1.properties, 'nothing else about it changed')
+  assert.equal(localStorage.getItem(LEGACY_FORK_BASIS_KEY) !== null, true, 'load never deletes anything')
+
+  // a write that does not hold the adopted basis leaves the old key alone…
+  assert.equal(save({ ...r.state, scenarios: stored.scenarios }).ok, true)
+  assert.notEqual(localStorage.getItem(LEGACY_FORK_BASIS_KEY), null)
+  // …and the first good write that does retires it
+  assert.equal(save(r.state).ok, true)
+  assert.equal(localStorage.getItem(LEGACY_FORK_BASIS_KEY), null)
+  assert.equal(scenarioById(load().state, s1.id).forkBasis, cached, 'and the basis is in the data now')
+
+  // adopting never overwrites a scenario's own basis
+  const own = { ...stored, scenarios: [{ ...s1, forkBasis: '0000aaaa' }] }
+  assert.equal(adoptForkBases(own, { [s1.id]: cached }).scenarios[0].forkBasis, '0000aaaa')
+  assert.equal(adoptForkBases(own, {}), own, 'nothing to adopt: the very same state')
 })
 
 test('a full editing session on the scenario side leaves actual identical by reference', () => {

@@ -54,7 +54,14 @@ export function cloneForScenario(property) {
 export function forkScenario(state, portfolioId, { name = '', note = '' } = {}) {
   const buildings = actualBuildings(state, portfolioId)
   if (!buildings) return null
-  return makeScenario({ portfolioId, name, note, properties: buildings.map(cloneForScenario) })
+  return makeScenario({
+    portfolioId,
+    name,
+    note,
+    properties: buildings.map(cloneForScenario),
+    // what actual looked like right now, for "actual changed since"
+    forkBasis: forkSignature(buildings),
+  })
 }
 
 /** A portfolio's actual buildings in its order, or null for an unknown portfolio. */
@@ -200,9 +207,9 @@ export function splitDeltas(actualProperties, scenarioProperties) {
 // rent, status, splits, side), and bills with any loan terms — no ids, and
 // none of what a scenario never holds (photos, payments, tenants, lease
 // dates, list items, notes) or what changes month to month (a bill's paid
-// box). Taken from actual at the fork, it is compared with actual now; a
-// scenario's own edits never enter into it. The fork's signature is kept
-// beside the data (store.js, FORK_BASIS_KEY), never in it.
+// box). Taken from actual at the fork (and at every refresh) it is stored
+// on the scenario as `forkBasis`, so it travels with backups and imports,
+// and compared with actual now; a scenario's own edits never enter into it.
 // ---------------------------------------------------------------------------
 
 // extraStartDate joins the projection only when the loan has the key, so
@@ -257,12 +264,13 @@ export function actualSignature(state, portfolioId) {
 }
 
 /**
- * Has actual changed since this scenario was forked (or refreshed)?
- * `basis` is the signature taken then. true / false, or null when there is
- * no basis to go by (a scenario from before this was kept, or one that
- * came in through an import) — then the marker stays quiet.
+ * Has actual changed since this scenario was forked (or refreshed)? Its
+ * `forkBasis` is the signature taken then. true / false, or null when it
+ * has none to go by (forked before bases were kept, and never refreshed)
+ * — then the marker stays quiet.
  */
-export function isStale(state, scenario, basis) {
+export function isStale(state, scenario) {
+  const basis = scenario?.forkBasis
   if (!scenario || typeof basis !== 'string' || basis === '') return null
   return basis !== actualSignature(state, scenario.portfolioId)
 }

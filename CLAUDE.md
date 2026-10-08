@@ -39,11 +39,13 @@ Lives in `src/data/schema.js` (shapes, defaults, factories, empty seed),
 `src/data/loans.js` (the loan estimate — display only, never stored).
 
 ```
-State     { version, updatedAt, portfolios[], properties[], scenarios[] }   // version: 9
+State     { version, updatedAt, portfolios[], properties[], scenarios[] }   // version: 10
 Portfolio { id, name, propertyIds[] }   // the buildings it holds, by id
-Scenario  { id, portfolioId, name, note, createdAt, properties[] }
+Scenario  { id, portfolioId, name, note, createdAt, properties[], forkBasis? }
                                         // a whole COPY of one portfolio's buildings from
-                                        // when it was made, fresh ids, nothing factual
+                                        // when it was made, fresh ids, nothing factual.
+                                        // forkBasis OPTIONAL: actual's signature at the
+                                        // fork / last refresh; absent or null = unknown
 Property  { id, name, address, shape, photo, photoSize, view, floors[], bills[] }
   shape: 'gable' | 'flat' | 'mansard' | 'custom'
   photo: null or a data-URL string (JPEG, resized to <= 1200px wide; the
@@ -87,7 +89,12 @@ field changes (empty seed, rules enforced in `ops.js`); v5 added
 `unit.payments` (default `{}`); v8 added `state.scenarios` (default `[]`);
 v9 added `bill.loan`, which is **optional and never filled in**: a bill
 with no `loan` key loads byte for byte as it was, and a stored loan is
-normalized in place (`makeLoan`) with its unknown fields kept.
+normalized in place (`makeLoan`) with its unknown fields kept; v10 added
+`loan.extraStartDate` and `scenario.forkBasis`, both **optional and never
+filled in** (a loan without a start date keeps its extra from the first
+payment; a scenario without a basis shows no stale marker until it is
+refreshed), and `load()` adopts bases from the old `rentroll:fork-basis`
+cache into the scenarios they name.
 All additive, filled by `normalizeState`, no migration step needed. A stored `sideOf` or
 `widthWeight` is always kept; the default only applies to units that have
 none. **No existing field has ever moved**: v6 buildings stay exactly where
@@ -132,9 +139,13 @@ first Side by side open forking "What-if <date>" by itself and later opens
 asking, the actual pane rendering zero inputs / buttons / handles /
 toggles, the delta bar as each side's own totals subtracted, refresh from
 actual keeping id and name while replacing content, the stale marker after
-a real edit and never after a scenario edit or a fact, and a full editing
-session on the scenario side leaving every actual object identical by
-reference). Tests that render components import `tests/support/jsx.mjs`
+a real edit and never after a scenario edit or a fact, the basis on the
+scenario through save/load and a backup restore (and an older backup never
+wiping it), the old cache's bases moved into their scenarios and the key
+removed only after a write that holds them, and a full editing session on
+the scenario side leaving every actual object identical by reference).
+`tests/migration.test.mjs` also loads a v9 store at v10 with neither
+optional field invented. Tests that render components import `tests/support/jsx.mjs`
 first: a module hook that runs `.jsx` through Vite's own
 `transformWithOxc` — nothing installed, nothing written to disk.
 
@@ -294,10 +305,14 @@ when it was made.
   addresses, roofs, floors, units (position, width, rent, status, splits,
   side), bills with loan terms — with no ids, no facts (photos, payments,
   tenants, lease dates, list items, notes), and no bill `paid` box.
-  `isStale(state, scenario, basis)` compares the basis taken at the fork
-  with `actualSignature` now: `true` / `false`, or `null` (unknown, the
-  marker stays quiet) without a basis — scenarios from before this, or
-  imported ones. A scenario's own edits never enter into it.
+  The signature of actual as copied is stored ON the scenario as
+  `forkBasis` by `forkScenario` and by every `refreshScenario`, so it rides
+  through save, load, backup, and import (an import never wipes one: a
+  file without it leaves the sheet's). `isStale(state, scenario)` compares
+  it with `actualSignature` now: `true` / `false`, or `null` (unknown, the
+  marker stays quiet) for a scenario without one — forked before bases
+  were kept and never refreshed. A scenario's own edits never enter into
+  it.
 
 ### Building bills and loans
 
@@ -422,11 +437,12 @@ shows — never a parallel set. Writes go through `addPropertyBill` /
 ### Storage rules
 
 - localStorage key `rentroll:v1`. `SCHEMA_VERSION` is in `schema.js`.
-- `rentroll:fork-basis` is a **cache beside the data, not part of it**:
-  `{ [scenarioId]: forkSignature }`, written by `saveForkBasis` at a fork
-  or a refresh (pruning ids of scenarios that are gone) and read by
-  `loadForkBases`. `load()` / `save()` never touch it, export and import
-  never carry it, and losing it costs only the stale marker.
+- `rentroll:fork-basis` (`LEGACY_FORK_BASIS_KEY`) is the OLD side cache of
+  fork bases, from before they lived on the scenario. Nothing writes it
+  any more. `load()` copies each entry into the scenario it names when
+  that scenario has no `forkBasis` (`adoptForkBases`, never overwriting);
+  `save()` removes the key only after a successful write in which every
+  scenario it still names carries a basis. Until then it is left alone.
 - Every `save()` writes the whole state object stamped with `version` and
   `updatedAt`. It refuses to write a non-state value, and refuses to write
   zero properties while the stored state still holds units unless

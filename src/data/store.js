@@ -126,7 +126,8 @@ export function load() {
   }
 
   const migrated = migrate(parsed)
-  result.state = migrated.state
+  // bases from the old side cache go into the scenarios they name
+  result.state = adoptForkBases(migrated.state, readLegacyForkBases(ls))
   result.source = 'storage'
   result.from = migrated.from
   result.warnings.push(...migrated.warnings)
@@ -210,6 +211,7 @@ export function save(state, opts = {}) {
   const text = JSON.stringify(stamped)
   try {
     ls.setItem(STORAGE_KEY, text)
+    retireLegacyForkBases(ls, stamped)
     return { ok: true, bytes: text.length, state: stamped }
   } catch (error) {
     // QuotaExceededError is the usual cause (large photo data URLs).
@@ -484,51 +486,67 @@ function mergeScenario(ex, inc) {
 }
 
 // ---------------------------------------------------------------------------
-// fork basis — a cache beside the data, never part of it
+// the old fork-basis cache — moved into the scenarios
 //
-// What actual looked like when each scenario was forked or refreshed, as
-// the short signature from scenarios.js (forkSignature), so the split view
-// can say "actual changed since this fork". It lives under its own key:
-// load() never reads it, save() never writes it, export and import never
-// carry it, and nothing in 'rentroll:v1' changes shape. Losing it costs
-// only the marker (isStale says null — unknown — and stays quiet).
+// Before v10 the signature taken at a fork lived beside the data, under
+// 'rentroll:fork-basis' ({ [scenarioId]: signature }). It now lives on the
+// scenario (scenario.forkBasis), so it travels with backups and imports.
+// The move is additive and explicit:
+//   * load() copies an entry into the scenario it names when that scenario
+//     has no basis of its own (adoptForkBases). Nothing is overwritten.
+//   * save() removes the old key only after a successful write of a state
+//     in which every scenario the key still names carries a basis. Until
+//     then it is left exactly as it was.
+// Nothing writes the old key any more.
 // ---------------------------------------------------------------------------
 
-export const FORK_BASIS_KEY = 'rentroll:fork-basis'
+export const LEGACY_FORK_BASIS_KEY = 'rentroll:fork-basis'
 
-/** { [scenarioId]: signature }. Unreadable or missing means {}. Never throws. */
-export function loadForkBases() {
-  const ls = getStorage()
-  if (!ls) return {}
+/** The old cache as { [scenarioId]: signature }; missing or unreadable is {}. Never throws. */
+function readLegacyForkBases(ls) {
   try {
-    const v = JSON.parse(ls.getItem(FORK_BASIS_KEY) ?? '{}')
+    const raw = ls?.getItem(LEGACY_FORK_BASIS_KEY)
+    if (raw == null) return {}
+    const v = JSON.parse(raw)
     if (!isObject(v)) return {}
     const out = {}
-    for (const [id, sig] of Object.entries(v)) if (typeof sig === 'string') out[id] = sig
+    for (const [id, sig] of Object.entries(v)) if (typeof sig === 'string' && sig !== '') out[id] = sig
     return out
   } catch {
     return {}
   }
 }
 
+const hasBasis = (scenario) => typeof scenario?.forkBasis === 'string' && scenario.forkBasis !== ''
+
 /**
- * Record a scenario's signature, dropping entries for scenarios that no
- * longer exist (`keepIds`, when given). Returns the map as it now stands,
- * written or not. Never throws.
+ * Give each scenario without a basis the one `bases` holds for it. A
+ * scenario that has its own keeps it; one the map does not name is left
+ * as it is (no basis: the marker stays quiet). Returns the same state when
+ * nothing is adopted.
  */
-export function saveForkBasis(scenarioId, signature, keepIds = null) {
-  const next = { ...loadForkBases(), [scenarioId]: signature }
-  if (Array.isArray(keepIds)) {
-    const keep = new Set([...keepIds, scenarioId])
-    for (const id of Object.keys(next)) if (!keep.has(id)) delete next[id]
-  }
-  const ls = getStorage()
+export function adoptForkBases(state, bases) {
+  const list = Array.isArray(state?.scenarios) ? state.scenarios : []
+  let adopted = false
+  const scenarios = list.map((s) => {
+    if (hasBasis(s) || typeof bases?.[s.id] !== 'string' || bases[s.id] === '') return s
+    adopted = true
+    return { ...s, forkBasis: bases[s.id] }
+  })
+  return adopted ? { ...state, scenarios } : state
+}
+
+/** After a good write: drop the old key once every scenario it names (still there) has a basis. */
+function retireLegacyForkBases(ls, written) {
   try {
-    ls?.setItem(FORK_BASIS_KEY, JSON.stringify(next))
+    if (ls.getItem(LEGACY_FORK_BASIS_KEY) == null) return
+    const bases = readLegacyForkBases(ls)
+    const byId = new Map((written.scenarios ?? []).map((s) => [s.id, s]))
+    const pending = Object.keys(bases).some((id) => byId.has(id) && !hasBasis(byId.get(id)))
+    if (!pending) ls.removeItem(LEGACY_FORK_BASIS_KEY)
   } catch {
-    // out of quota: the marker just has nothing to go by for this scenario
+    // leave it; the next good write tries again
   }
-  return next
 }
 
 // ---------------------------------------------------------------------------
