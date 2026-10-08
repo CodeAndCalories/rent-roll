@@ -35,10 +35,11 @@ units. Any change to the stored shape must:
 Lives in `src/data/schema.js` (shapes, defaults, factories, empty seed),
 `src/data/store.js` (load, save, migrate, importJSON, exportJSON),
 `src/data/ops.js` (writes that enforce rules), `src/data/templates.js`
-(building templates as data), and `src/data/totals.js` (totals math).
+(building templates as data), `src/data/totals.js` (totals math), and
+`src/data/loans.js` (the loan estimate — display only, never stored).
 
 ```
-State     { version, updatedAt, portfolios[], properties[], scenarios[] }   // version: 8
+State     { version, updatedAt, portfolios[], properties[], scenarios[] }   // version: 9
 Portfolio { id, name, propertyIds[] }   // the buildings it holds, by id
 Scenario  { id, portfolioId, name, note, createdAt, properties[] }
                                         // a whole COPY of one portfolio's buildings from
@@ -68,7 +69,10 @@ Payment { half, status, amount, paidOn, note }
   status: 'unpaid' | 'partial' | 'paid' | 'late' | 'waived'
   amount                                // starts at the rent when marked; never rewritten
   paidOn                                // 'YYYY-MM-DD' local, or null
-Bill  { id, label, amount, cadence, dueDay, paid }   // cadence: 'monthly'|'yearly'|'once'
+Bill  { id, label, amount, cadence, dueDay, paid, loan? }   // cadence: 'monthly'|'yearly'|'once'
+  loan: OPTIONAL — absent or null is no loan terms; at most one per building
+Loan  { originalPrincipal, annualRatePercent, termMonths, firstPaymentDate,
+        extraMonthlyPrincipal }         // the TERMS only; firstPaymentDate 'YYYY-MM-DD' local or null
 Task  { id, text, done, createdAt }
 Note  { id, text, createdAt }
 ```
@@ -77,15 +81,21 @@ Schema history: v1 initial; v2 added `photoSize`, `view`, `sideOf` (default
 `'right'`), `photoBox`; v3 changed the `sideOf` default to `'left'`; v4 has no
 field changes (empty seed, rules enforced in `ops.js`); v5 added
 `widthWeight` (default 1); v6 added `state.portfolios`; v7 added
-`unit.payments` (default `{}`); v8 added `state.scenarios` (default `[]`).
+`unit.payments` (default `{}`); v8 added `state.scenarios` (default `[]`);
+v9 added `bill.loan`, which is **optional and never filled in**: a bill
+with no `loan` key loads byte for byte as it was, and a stored loan is
+normalized in place (`makeLoan`) with its unknown fields kept.
 All additive, filled by `normalizeState`, no migration step needed. A stored `sideOf` or
 `widthWeight` is always kept; the default only applies to units that have
 none. **No existing field has ever moved**: v6 buildings stay exactly where
 they were, at the top level, and a portfolio only lists ids. `npm test` runs
 `tests/migration.test.mjs` (a saved v2 store loads with nothing lost),
-`tests/portfolio.test.mjs` (empty seed, templates, rules, selection, totals),
+`tests/portfolio.test.mjs` (empty seed, templates, rules, selection, Build
+following the picker, totals),
 `tests/structure.test.mjs` (add floor / unit / annex, the empty-unit and
-empty-floor guards, a rename through a save and reload), and
+empty-floor guards, a rename through a save and reload, the unit-count
+stepper adding and removing at the right and refusing a unit that holds
+anything), and
 `tests/widths.test.mjs` (weight normalization, the drag arithmetic and its
 15% floor, the annex staying out of the split, `setUnitWidths`), and
 `tests/portfolios.test.mjs` (a pre-v6 store gathered into one portfolio with
@@ -105,7 +115,16 @@ leaving actual the same objects, an actual edit leaving the scenario the
 same object, payments and photos stripped even from a write aimed at a
 scenario, a unit added in a scenario not in actual, the compare table's
 numbers, portfolio removal taking its scenarios, the cap, and save/load
-plus export/import round trips).
+plus export/import round trips), and `tests/bills.test.mjs` (a seeded
+building bill edited and persisted through a reload, the panel's monthly
+figure `===` the title block's, the expenses summary's total `===`
+`computeTotals().bills`, one loan per building by every write route, the
+escrow note, a v8 store migrating to v9 with every byte kept and no bill
+gaining a loan, loan terms through save/load and export/import), and
+`tests/loans.test.mjs` (300,000 at 6.5% over 360 = 1,896.20 to the cent,
+the 0% edge, extra principal shortening the term, missing terms, the typed
+amount beside P+I, and payments to date across month and year boundaries
+in a Los Angeles child process).
 
 ### Portfolios
 
@@ -245,6 +264,40 @@ when it was made.
 - No "apply scenario to actual". One-way copying is what keeps the rules
   simple.
 
+### Building bills and loans
+
+Building bills are `property.bills`: the four every template seeds
+(Mortgage, Property taxes, Insurance, Water) are the very bills the editor
+shows — never a parallel set. Writes go through `addPropertyBill` /
+`patchPropertyBill` / `removePropertyBill` / `setBillLoan` in `ops.js`.
+
+- **One function, two places.** `propertyBillsMonthly(property)` and
+  `unitBillsMonthly(unit)` (`totals.js`) are what the panels show and what
+  `computeTotals` adds up, so a panel and the title block cannot disagree.
+  `expenseSummary(properties)` groups every building's bills and every
+  unit's bills with the same helpers in the same order, so its total is the
+  title block's `bills` exactly. Collected and net are defined as before.
+- **Loan terms** (`bill.loan`) are optional, on building bills, **one per
+  building**: `patchProperty` refuses any write that adds a second loan
+  bill (`RuleError` `'one-loan'`, naming the bill that holds it); older
+  data that already has two is never refused for an unrelated edit.
+  `loanCheck(property, billId)` gives `{ ok, reason }` for the UI.
+- **Only the terms are stored.** `loanSummary(loan, today)` computes, on
+  every render: P+I (standard amortization, `P·r / (1 − (1+r)^−n)`, or
+  `P / n` at 0%) rounded to the cent; the schedule in whole cents with
+  interest rounded monthly and the last payment settling any leftover;
+  payments made (due on or before today's LOCAL date — `dayKey`, never
+  `toISOString`) and remaining; balance; interest to date; payoff
+  (`dueDateOf` keeps the first payment's day, held to a shorter month's
+  end). Extra principal is assumed with every payment from the first, and
+  `extra` reports the standard payoff, months saved, and interest saved.
+  Missing terms come back as `{ ok: false, missing }`, never NaN.
+- **The typed amount is never corrected.** `escrowSplit(bill, summary)`
+  sets the bill's monthly amount beside P+I; the difference is labelled
+  "escrow / other". `escrowOverlap(property)` lists taxes / insurance bills
+  with an amount beside a loan bill, for a quiet note — never a block.
+- It is a calculator: labelled an estimate, no APR, no advice.
+
 ### Rules enforced in the data layer (`ops.js`)
 
 - All unit and property writes from the UI go through `patchUnit` /
@@ -286,6 +339,16 @@ when it was made.
   drag only ever stores the pair it moved. A weight that is not a positive
   number falls back to 1, one aimed at a side annex is ignored, and a write
   that changes nothing returns the very same state.
+- **Unit count** (`setFloorUnitCount(state, propertyId, floorId, n)`, the
+  Build stepper): sets a floor's main units in one write, 0 to
+  `MAX_FLOOR_UNITS` (12). Units come and go at the RIGHT of the floor as
+  drawn (`drawnUnits` in `lib/widths.js`, the same sort `FloorRow` uses);
+  new ones are blank and named off the floor label, positions are laid out
+  so the drawing reads them back in that order (left, full…, right), widths
+  ride with their units, and a side annex is not counted and keeps its
+  slot. Going down never takes a unit that holds anything: the whole write
+  is refused (`'not-empty'`), naming the unit, what it holds, and the
+  lowest count the floor can reach. The + tab (`addUnit`) is unchanged.
 - **Adding**: `addFloor` puts a floor on top, labelled off the old top
   floor (`nextFloorLabel`), with one unit on it. `addUnit` appends to a
   floor and relays it out. `addSideAnnex(state, id, side)` hangs one off the
@@ -354,8 +417,10 @@ in it, so the drag handle's behaviour is tested in node:
 ### Money
 
 Amounts are plain numbers in dollars. Round only at display with
-`Math.round` (`formatDollars()`). Empty input means 0, never NaN
-(`toAmount()` is the only way input becomes a stored amount).
+`Math.round` (`formatDollars()`); the loan estimate alone shows cents
+(`formatCents()`), since it is read against a lender's statement. Empty
+input means 0, never NaN (`toAmount()` is the only way input becomes a
+stored amount).
 
 ## Installed app (PWA)
 
@@ -445,6 +510,13 @@ Amounts are plain numbers in dollars. Round only at display with
   absolutely, so Build never changes a figure's width or moves a caption.
   Build is hidden in photo view, and never renders in the print view. Every
   handle calls `ops.js`; the guards live there, not in the component.
+  While Build is on, the caption also lists each floor with a unit-count
+  stepper (`UnitCountRow`: − / a typed count / +, 44px on a phone, the
+  count committed on Enter or blur) → `structure.setUnitCount` →
+  `ops.setFloorUnitCount`; living in the caption, it never moves the
+  figure. **Build follows the picker**: `buildTarget(buildId, displayed)`
+  (`lib/selection.js`) keeps Build on when the sheet swaps the one
+  building on screen for another.
 - **Width handles** (`WidthHandle` in `Building.jsx`, Build mode only): a
   zero-width flex item on each shared wall with a 24px target over it, so it
   costs the drawing no space and the figure never moves. Pointer Events with
@@ -486,6 +558,23 @@ Amounts are plain numbers in dollars. Round only at display with
   writes on every state change. An explicit confirmed removal sets
   `emptyingOnPurpose` for exactly one write, which is how `save()` is told
   an empty sheet is deliberate.
+- **Building bills** (`BuildingBills.jsx`, the caption's "$ Bills" chip,
+  with the building's monthly figure on it): the building's bills in the
+  unit panel's own `BillRow`, the monthly equivalent on top
+  (`propertyBillsMonthly`). Each bill offers "+ Loan terms" until one bill
+  holds them; the loan block has the five terms, a two-tap "Remove terms",
+  and the estimate (P+I, your amount and "escrow / other" when they
+  differ, payments made · left, balance now, interest to date, payoff, and
+  with extra principal the earlier payoff and interest saved), labelled an
+  estimate. The escrow note sits under the loan bill. Writes go
+  `bills.patch / add / remove / loan` in `App.jsx` → `ops.js`.
+- **Expenses summary** (`ExpensesView.jsx`, the title block's Expenses
+  cell, a button marked ›): `expenseSummary` of what the sheet shows —
+  per building its bills (the loan bill tagged), the escrow note, then each
+  unit with bills — with monthly equivalents and the total. A building
+  line opens its bills sheet scrolled to and outlined on that bill
+  (`focusBillId`); a unit line opens the unit panel on Bills; both come
+  back to the summary on close (`returnTo`).
 - **Removing a building** (caption, Build mode): a building with units shows
   "Remove building" and the armed chip names its contents through
   `TwoTapChip`'s `detail`; an empty one keeps the quiet `✕ Building`.
@@ -611,7 +700,9 @@ Amounts are plain numbers in dollars. Round only at display with
   floors, side boxes, caption, geometry constants), `UnitBox.jsx` (box, rent
   input, status dot, split party wall), `TitleBlock.jsx` (totals),
   `UnitPanel.jsx` (detail panel: header fields + Payments / Bills / List /
-  Updates tabs), `MonthView.jsx` (one month of payments across the
+  Updates tabs; exports `BillRow` and a few fields), `BuildingBills.jsx`
+  (a building's bills and its loan estimate), `ExpensesView.jsx` (every
+  bill in the portfolio), `MonthView.jsx` (one month of payments across the
   portfolio), `LeaseView.jsx` (every lease end in the portfolio, soonest
   first), `ScenarioBanner.jsx`, `ScenariosSheet.jsx`, `CompareView.jsx`
   (scenario mode's banner, list, and comparison table).
@@ -628,9 +719,10 @@ Amounts are plain numbers in dollars. Round only at display with
 - Lease flag: `leaseFlag()` (in `lib/leases.js`, re-exported by
   `UnitPanel.jsx`) shows amber "renews soon" when `leaseEnd` is 0–60 days
   out (inclusive), alert "ended" when past. Days are local-midnight days.
-- Unit-level bills are summed per unit in the panel (`unitBillsMonthly`).
-  `computeTotals` already includes both property bills and unit bills in
-  "net after bills"; the panel reuses `billMonthly` so the two agree.
+- Unit-level bills are summed per unit in the panel (`unitBillsMonthly`),
+  building bills in the bills sheet (`propertyBillsMonthly`); both live in
+  `totals.js` and `computeTotals` adds up those very functions, so a panel
+  and the title block always agree.
 - Theme: sheet `#08202E`, line `#5FB6D0`, text `#A8E8F5`, amber `#F2B441`,
   alert `#F2704B`; 22px grid at 7%; DM Mono for numbers and labels, Archivo
   uppercase wide-tracked for headings. Fonts load from Google Fonts in
