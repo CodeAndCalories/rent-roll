@@ -10,8 +10,9 @@ export { billMonthly, computeTotals, rentPerRental, unitMonthly }
  * The drafting title block. Totals cover the ACTIVE PORTFOLIO, whatever the
  * sheet is drawing: `portfolioName` names it, and `showing` names the one
  * building drawn when the sheet is filtered, so neither is ambiguous.
+ * `onExpenses` makes the Expenses cell a button that opens the summary.
  */
-export default function TitleBlock({ totals: t, saveError, showing = null, portfolioName = '' }) {
+export default function TitleBlock({ totals: t, saveError, showing = null, portfolioName = '', onExpenses }) {
   const today = new Date().toISOString().slice(0, 10)
 
   return (
@@ -30,6 +31,8 @@ export default function TitleBlock({ totals: t, saveError, showing = null, portf
           label="Expenses / mo"
           value={formatDollars(t.bills)}
           sub={`bldg ${formatDollars(t.propertyBills)} · units ${formatDollars(t.unitBills)}`}
+          onClick={onExpenses}
+          title="Every bill in the portfolio, by building"
         />
         <Cell label="Net / mo" value={formatDollars(t.net)} tone={t.net < 0 ? 'alert' : 'line'} valueTone={t.net < 0 ? 'alert' : 'ink'} />
         <Cell label="Net / yr" value={formatDollars(t.annualNet)} valueTone={t.annualNet < 0 ? 'alert' : 'ink'} />
@@ -67,14 +70,33 @@ const VALUE_TONE = {
   alert: 'text-alert',
 }
 
-function Cell({ label, value, sub, tone = 'line', valueTone = 'ink' }) {
-  return (
-    <div className="bg-sheet/95 px-3 py-2 sm:px-4 sm:py-3">
-      <div className="text-[9px] tracking-[0.2em] text-line/70 uppercase">{label}</div>
+/** One figure. With `onClick` it is a button (same size), marked with a ›. */
+function Cell({ label, value, sub, tone = 'line', valueTone = 'ink', onClick, title }) {
+  const body = (
+    <>
+      <div className="flex items-baseline justify-between gap-2 text-[9px] tracking-[0.2em] text-line/70 uppercase">
+        <span>{label}</span>
+        {onClick && (
+          <span aria-hidden className="text-line/50 group-hover:text-amber">
+            ›
+          </span>
+        )}
+      </div>
       <div className={`mt-0.5 text-xl leading-tight tabular-nums sm:text-2xl ${VALUE_TONE[valueTone] ?? VALUE_TONE.ink}`}>
         {value}
       </div>
       {sub && <div className={`mt-0.5 truncate text-[10px] tabular-nums ${TONE[tone] ?? TONE.line}`}>{sub}</div>}
-    </div>
+    </>
+  )
+  if (!onClick) return <div className="bg-sheet/95 px-3 py-2 sm:px-4 sm:py-3">{body}</div>
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className="group w-full min-w-0 bg-sheet/95 px-3 py-2 text-left hover:bg-line/10 sm:px-4 sm:py-3"
+    >
+      {body}
+    </button>
   )
 }

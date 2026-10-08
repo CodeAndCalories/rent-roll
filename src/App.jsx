@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { load, save } from './data/store.js'
-import { formatDollars, makePortfolio } from './data/schema.js'
+import { formatDollars, makeBill, makePortfolio } from './data/schema.js'
 import {
   ACTUAL,
   RuleError,
   addFloor as opsAddFloor,
   addPortfolio as opsAddPortfolio,
   addProperty as opsAddProperty,
+  addPropertyBill as opsAddPropertyBill,
   addScenario as opsAddScenario,
   applyTo,
   describePortfolio,
@@ -16,16 +17,19 @@ import {
   clearPayment as opsClearPayment,
   cyclePayment as opsCyclePayment,
   patchProperty,
+  patchPropertyBill as opsPatchPropertyBill,
   patchScenario as opsPatchScenario,
   patchUnit,
   removeFloor as opsRemoveFloor,
   removePortfolio as opsRemovePortfolio,
   removeProperty as opsRemoveProperty,
+  removePropertyBill as opsRemovePropertyBill,
   removeScenario as opsRemoveScenario,
   removeUnit as opsRemoveUnit,
   renameFloor as opsRenameFloor,
   renamePortfolio as opsRenamePortfolio,
   scenarioTarget,
+  setBillLoan as opsSetBillLoan,
   setPayment as opsSetPayment,
   setUnitWidths as opsSetUnitWidths,
   sideAnnexCheck,
@@ -48,6 +52,8 @@ import TitleBlock from './components/TitleBlock.jsx'
 import UnitPanel from './components/UnitPanel.jsx'
 import MonthView from './components/MonthView.jsx'
 import LeaseView from './components/LeaseView.jsx'
+import BuildingBills from './components/BuildingBills.jsx'
+import ExpensesView from './components/ExpensesView.jsx'
 import ScenarioBanner from './components/ScenarioBanner.jsx'
 import ScenariosSheet from './components/ScenariosSheet.jsx'
 import CompareView from './components/CompareView.jsx'
@@ -70,7 +76,9 @@ export default function App() {
   const [openUnitId, setOpenUnitId] = useState(null)
   const [panelTab, setPanelTab] = useState('payments') // which tab the panel opens on
   const [notice, setNotice] = useState(null)
-  const [dialog, setDialog] = useState(null) // 'raise' | 'backup' | 'template' | 'month' | 'leases' | null
+  const [dialog, setDialog] = useState(null) // 'raise' | 'backup' | 'template' | 'month' | 'leases' | 'bills' | 'expenses' | null
+  const [billsId, setBillsId] = useState(null) // the building whose bills sheet is open
+  const [billsFocus, setBillsFocus] = useState(null) // the bill tapped in the expenses summary
   const [month, setMonth] = useState(() => monthKey()) // the month view's month, local
   const [printing, setPrinting] = useState(false)
   const [undo, setUndo] = useState(null) // { changes, label } from the last raise
@@ -92,8 +100,9 @@ export default function App() {
   // sheet over a store that still holds units unless it is told the emptying
   // was deliberate; this is how it is told, for one write only.
   const emptyingOnPurpose = useRef(false)
-  // The dialog to bring back when the unit panel closes: the month and
-  // lease views open a unit's panel in their place and come back after.
+  // The dialog to bring back when the unit panel (or a building's bills)
+  // closes: the month, lease, and expenses views open an editor in their
+  // place and come back after.
   const returnTo = useRef(null)
 
   // Persist the whole state on every change. save() refuses unsafe writes
@@ -186,6 +195,23 @@ export default function App() {
           queueMicrotask(() => setOpenUnitId((cur) => (cur === unitId ? null : cur)))
           return next
         }),
+    }),
+    [write],
+  )
+
+  /**
+   * A building's own bills — the ones every template seeds, edited in place
+   * — and the loan terms on one of them. ops.js holds the one-loan rule.
+   */
+  const bills = useMemo(
+    () => ({
+      patch: (propertyId, billId, patch) => write((s) => opsPatchPropertyBill(s, propertyId, billId, patch)),
+      add: (propertyId) => {
+        const bill = makeBill()
+        write((s) => opsAddPropertyBill(s, propertyId, bill))
+      },
+      remove: (propertyId, billId) => write((s) => opsRemovePropertyBill(s, propertyId, billId)),
+      loan: (propertyId, billId, terms) => write((s) => opsSetBillLoan(s, propertyId, billId, terms)),
     }),
     [write],
   )
@@ -424,6 +450,27 @@ export default function App() {
   const openUnitFromLeases = useCallback((unitId) => openUnitFromView(unitId, 'leases'), [openUnitFromView])
   const openLeases = useCallback(() => setDialog('leases'), [])
 
+  /** A building's bills, from its caption. */
+  const openBills = useCallback((propertyId) => {
+    setBillsId(propertyId)
+    setBillsFocus(null)
+    setDialog('bills')
+  }, [])
+  /** The expenses summary, from the title block; its lines open their editors and come back. */
+  const openExpenses = useCallback(() => setDialog('expenses'), [])
+  const openBillsFromExpenses = useCallback((propertyId, billId = null) => {
+    returnTo.current = 'expenses'
+    setBillsId(propertyId)
+    setBillsFocus(billId)
+    setDialog('bills')
+  }, [])
+  const openUnitBillsFromExpenses = useCallback((unitId) => {
+    returnTo.current = 'expenses'
+    setDialog(null)
+    setPanelTab('bills')
+    setOpenUnitId(unitId)
+  }, [])
+
   const closePanel = useCallback(() => {
     setOpenUnitId(null)
     if (returnTo.current) {
@@ -432,6 +479,11 @@ export default function App() {
     }
   }, [])
   const closeDialog = useCallback(() => setDialog(null), [])
+  /** The bills sheet goes back to the expenses summary when it came from there. */
+  const closeBills = useCallback(() => {
+    setDialog(returnTo.current)
+    returnTo.current = null
+  }, [])
 
   // A scenario that went away under an open sheet (deleted from the
   // Scenarios sheet, replaced by an import) drops the sheet back to real
@@ -467,6 +519,7 @@ export default function App() {
   const inPortfolio = scenario ? scenario.properties : actualProperties
   const sheetName = scenario ? `Scenario · ${scenario.name || 'unnamed'}` : portfolioName
   const openUnit = openUnitId ? findUnit(viewState, openUnitId) : null
+  const billsProperty = dialog === 'bills' ? (viewState.properties.find((p) => p.id === billsId) ?? null) : null
   const totals = computeTotals(inPortfolio)
   const leases = scenario ? null : leaseSummary(actualProperties) // the header chip's count; hidden at zero
   const selection = resolveSelection(inPortfolio, selected)
@@ -549,13 +602,20 @@ export default function App() {
           onRemoveProperty={removeProperty}
           onSetPhoto={setPhoto}
           onNotice={setNotice}
+          onOpenBills={openBills}
           structure={structure}
           rentScale={totals.maxRent}
           photos={!scenario}
         />
       </div>
 
-      <TitleBlock totals={totals} saveError={saveError} showing={showing} portfolioName={sheetName} />
+      <TitleBlock
+        totals={totals}
+        saveError={saveError}
+        showing={showing}
+        portfolioName={sheetName}
+        onExpenses={openExpenses}
+      />
 
       {openUnit && (
         <UnitPanel
@@ -609,6 +669,27 @@ export default function App() {
           properties={inPortfolio}
           portfolioName={portfolioName}
           onOpenUnit={openUnitFromLeases}
+          onClose={closeDialog}
+        />
+      )}
+      {billsProperty && (
+        <BuildingBills
+          key={billsProperty.id}
+          property={billsProperty}
+          onBill={(billId, patch) => bills.patch(billsProperty.id, billId, patch)}
+          onAdd={() => bills.add(billsProperty.id)}
+          onRemove={(billId) => bills.remove(billsProperty.id, billId)}
+          onLoan={(billId, terms) => bills.loan(billsProperty.id, billId, terms)}
+          onClose={closeBills}
+          focusBillId={billsFocus}
+        />
+      )}
+      {dialog === 'expenses' && (
+        <ExpensesView
+          properties={inPortfolio}
+          portfolioName={sheetName}
+          onOpenBuilding={openBillsFromExpenses}
+          onOpenUnit={openUnitBillsFromExpenses}
           onClose={closeDialog}
         />
       )}

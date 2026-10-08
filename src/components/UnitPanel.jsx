@@ -13,7 +13,7 @@ import {
 import { OWED_STATUSES, defaultAmountFor, halvesFor, paymentFor } from '../data/payments.js'
 import { leaseFlag } from '../lib/leases.js'
 import { lastMonths, monthKey, monthLabel } from '../lib/months.js'
-import { billMonthly } from './TitleBlock.jsx'
+import { unitBillsMonthly } from '../data/totals.js'
 import { STATUS_TONE } from './MonthView.jsx'
 import { RentInput } from './UnitBox.jsx'
 import { Chip, keepFocusedFieldVisible } from './controls.jsx'
@@ -499,10 +499,10 @@ function PaymentStatusSelect({ value, onChange, label }) {
 // BILLS
 // ---------------------------------------------------------------------------
 
-/** Monthly-equivalent cost of a unit's own bills (yearly / 12, once = 0). */
-export function unitBillsMonthly(unit) {
-  return (unit.bills ?? []).reduce((sum, b) => sum + billMonthly(b), 0)
-}
+// Monthly-equivalent cost of a unit's own bills (yearly / 12, once = 0).
+// It lives in totals.js beside computeTotals, which adds up the same
+// function, so the panel and the title block never disagree.
+export { unitBillsMonthly }
 
 function BillsTab({ unit, onChange }) {
   const monthly = unitBillsMonthly(unit)
@@ -537,7 +537,12 @@ function BillsTab({ unit, onChange }) {
   )
 }
 
-function BillRow({ bill, onChange, onDelete }) {
+/**
+ * One bill: label, amount, cadence, due day, paid, and a two-tap delete.
+ * Shared with the building bills sheet (BuildingBills.jsx), which hangs the
+ * loan terms under it through `children`.
+ */
+export function BillRow({ bill, onChange, onDelete, children }) {
   return (
     <div className="space-y-2 border border-line/40 p-2">
       <div className="flex items-center gap-2">
@@ -581,6 +586,7 @@ function BillRow({ bill, onChange, onDelete }) {
           Paid
         </label>
       </div>
+      {children}
     </div>
   )
 }
@@ -718,7 +724,7 @@ export function formatStamp(iso) {
 
 const FLAG_TONE = { amber: 'text-amber', alert: 'text-alert' }
 
-function Field({ label, flag, className, children }) {
+export function Field({ label, flag, className, children }) {
   return (
     <div className={cx('min-w-0', className)}>
       <div className="mb-1 flex items-baseline justify-between gap-2 text-[9px] tracking-[0.2em] text-line/70 uppercase">
@@ -746,7 +752,7 @@ function TextInput({ value, onChange, className, ...rest }) {
   )
 }
 
-function DateInput({ value, onChange, ariaLabel, className = 'w-full' }) {
+export function DateInput({ value, onChange, ariaLabel, className = 'w-full' }) {
   return (
     <input
       type="date"
@@ -780,7 +786,7 @@ function Select({ value, onChange, options, ariaLabel }) {
 }
 
 /** Integer field with a local draft; commits clamped values as you type. */
-function NumberField({ value, onCommit, min, max, ariaLabel, className }) {
+export function NumberField({ value, onCommit, min, max, ariaLabel, className }) {
   const [draft, setDraft] = useState(() => (value == null ? '' : String(value)))
   const ref = useRef(null)
 
@@ -850,7 +856,7 @@ function DeleteButton({ onConfirm, what, label, confirmLabel = 'Delete?' }) {
   )
 }
 
-function AddButton({ onClick, children }) {
+export function AddButton({ onClick, children }) {
   return (
     <button
       type="button"
@@ -873,7 +879,7 @@ function SubmitButton({ children }) {
   )
 }
 
-function Empty({ children }) {
+export function Empty({ children }) {
   return <p className="py-2 text-xs text-line/50">{children}</p>
 }
 

@@ -3,6 +3,8 @@ import UnitBox from './UnitBox.jsx'
 import PhotoBuilding, { PHOTO_MIN_W } from './PhotoBuilding.jsx'
 import { Chip, InlineLabel, TwoTapChip, cx } from './controls.jsx'
 import { countUnits, describeContents } from '../data/ops.js'
+import { formatDollars } from '../data/schema.js'
+import { propertyBillsMonthly } from '../data/totals.js'
 import { drawnUnits, equalizePair, growOf, isMainUnit, resizePair } from '../lib/widths.js'
 import { PHOTO_MAX_WIDTH, resizeImageFile } from '../lib/image.js'
 
@@ -500,9 +502,10 @@ function Roof({ shape, width }) {
 // ---------------------------------------------------------------------------
 
 /**
- * Sits under the grade line at the same width as the figure. Holds the roof
- * cycle, drawing/photo toggle, photo upload/remove, and the Build toggle that
- * puts the handles on the drawing above it.
+ * Sits under the grade line at the same width as the figure. Holds the
+ * building's Bills, the roof cycle, drawing/photo toggle, photo
+ * upload/remove, and the Build toggle that puts the handles on the drawing
+ * above it.
  */
 export function BuildingCaption({
   property,
@@ -514,6 +517,7 @@ export function BuildingCaption({
   onRemoveProperty,
   onSetPhoto,
   onNotice,
+  onOpenBills,
 }) {
   const [busy, setBusy] = useState(false)
   const photo = hasPhoto(property)
@@ -521,6 +525,7 @@ export function BuildingCaption({
   const patch = (p) => onPropertyChange(property.id, p)
   // what removing this building would take with it, named in the confirm
   const contents = describeContents(property)
+  const billsMonthly = propertyBillsMonthly(property)
 
   const pickFile = async (e) => {
     const file = e.target.files?.[0]
@@ -559,6 +564,13 @@ export function BuildingCaption({
       />
 
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        {onOpenBills && (
+          <Chip onClick={() => onOpenBills(property.id)} title="This building's bills: mortgage, taxes, insurance, water">
+            $ Bills
+            {billsMonthly !== 0 && <span className="tracking-normal tabular-nums">· {formatDollars(billsMonthly)}/mo</span>}
+          </Chip>
+        )}
+
         {!photoView && (
           <Chip onClick={() => patch({ shape: nextShape(property.shape) })} title="Cycle roof shape">
             Roof · {property.shape} ⟳

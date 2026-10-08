@@ -188,6 +188,15 @@ export function formatDollars(amount) {
   return `$${whole.toLocaleString('en-US')}`
 }
 
+/**
+ * Display to the cent — for the loan estimate, whose figures are compared
+ * with a lender's statement. Same rules otherwise: never NaN, never -0.
+ */
+export function formatCents(amount) {
+  const n = Math.round(toAmount(amount) * 100) / 100 || 0
+  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
 // ---------------------------------------------------------------------------
 // factories — every field present, sensible defaults, unknown fields kept
 // ---------------------------------------------------------------------------

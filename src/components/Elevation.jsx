@@ -40,6 +40,7 @@ export default function Elevation({
   onRemoveProperty = noop,
   onSetPhoto = noop,
   onNotice = noop,
+  onOpenBills,
   structure = {},
   rentScale = 0,
   readOnly = false,
@@ -91,6 +92,7 @@ export default function Elevation({
                 onRemoveProperty={onRemoveProperty}
                 onSetPhoto={onSetPhoto}
                 onNotice={onNotice}
+                onOpenBills={onOpenBills}
                 photos={photos}
               />
             ))}
