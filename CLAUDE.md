@@ -380,10 +380,11 @@ shows — never a parallel set. Writes go through `addPropertyBill` /
   ride with their units, and a side annex is not counted and keeps its
   slot. Going down never takes a unit that holds anything: the whole write
   is refused (`'not-empty'`), naming the unit, what it holds, and the
-  lowest count the floor can reach. The + tab (`addUnit`) is unchanged.
+  lowest count the floor can reach. The + tab (`addUnit` → `addUnitTo`)
+  appends at the right the same way, one unit at a time, with no cap.
 - **Adding**: `addFloor` puts a floor on top, labelled off the old top
-  floor (`nextFloorLabel`), with one unit on it. `addUnit` appends to a
-  floor and relays it out. `addSideAnnex(state, id, side)` hangs one off the
+  floor (`nextFloorLabel`), with one unit on it. `addUnit` appends a unit
+  at the right of the floor as drawn (left, full…, right), like the stepper. `addSideAnnex(state, id, side)` hangs one off the
   bottom floor and is refused when that floor already has one, or when the
   building has no floors.
 

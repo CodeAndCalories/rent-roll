@@ -90,7 +90,7 @@ test('add floor: goes on top, labelled off the old top floor, with one unit', ()
   assert.notEqual(prop(a).floors[0].units[0].id, prop(b).floors[0].units[0].id)
 })
 
-test('add unit: the floor relays out full -> left + right, and keeps going', () => {
+test('add unit (the + tab): appends on the right, full -> left + right -> left, full, right', () => {
   let state = one('single', 'Solo') // one floor, one full unit
   const id = prop(state).id
   const floorId = prop(state).floors[0].id
@@ -102,7 +102,23 @@ test('add unit: the floor relays out full -> left + right, and keeps going', () 
 
   state = addUnit(state, id, floorId)
   assert.equal(countUnits(prop(state)), 3)
-  assert.deepEqual(positions(prop(state).floors[0]), ['left', 'right', 'full'])
+  assert.deepEqual(positions(prop(state).floors[0]), ['left', 'full', 'right'], 'the third is drawn on the right')
+  assert.deepEqual(
+    drawnUnits(prop(state).floors[0]).map((u) => u.name),
+    ['Main', '1F 2', '1F 3'],
+    'left to right in the order they were added',
+  )
+
+  // the + tab and the stepper agree, unit for unit
+  const base = one('single', 'Same')
+  const [bid, bfid] = [prop(base).id, prop(base).floors[0].id]
+  const viaTab = addUnit(addUnit(addUnit(base, bid, bfid), bid, bfid), bid, bfid)
+  const viaStepper = setFloorUnitCount(base, bid, bfid, 4)
+  assert.equal(countUnits(prop(viaTab)), 4)
+  assert.deepEqual(positions(prop(viaTab).floors[0]), ['left', 'full', 'full', 'right'])
+  assert.deepEqual(positions(prop(viaTab).floors[0]), positions(prop(viaStepper).floors[0]))
+  assert.deepEqual(drawnNames(prop(viaTab).floors[0]), drawnNames(prop(viaStepper).floors[0]))
+  assert.deepEqual(drawnNames(prop(viaTab).floors[0]), ['Main', '1F 2', '1F 3', '1F 4'])
 
   // an unknown floor or property is a no-op, never a throw
   assert.equal(countUnits(prop(addUnit(state, id, 'nope'))), 3)
@@ -239,8 +255,30 @@ test('stepper: a floor goes to 4 units in one write, new ones on the right', () 
   assert.throws(() => setFloorUnitCount(after, id, floorId, -1), RuleError)
   assert.equal(setFloorUnitCount(after, id, 'nope', 2), after, 'an unknown floor is a no-op')
 
-  // a floor the + tab grew (its third unit drawn in the middle) keeps its
-  // look, and the stepper still adds at the right of what is drawn
+  // a floor stored the old way (a third unit appended as 'full', so drawn
+  // in the middle) keeps its look, and both + and the stepper add at the
+  // right of what is drawn
+  const legacy = makeState({
+    properties: [
+      {
+        id: 'L',
+        name: 'Legacy',
+        floors: [
+          {
+            id: 'LF',
+            label: '1F',
+            units: [
+              { id: 'u1', name: 'A', position: 'left' },
+              { id: 'u2', name: 'B', position: 'right' },
+              { id: 'u3', name: 'C', position: 'full' },
+            ],
+          },
+        ],
+      },
+    ],
+  })
+  assert.deepEqual(drawnNames(prop(legacy).floors[0]), ['A', 'C', 'B'])
+  assert.deepEqual(drawnNames(prop(addUnit(legacy, 'L', 'LF')).floors[0]), ['A', 'C', 'B', '1F 4'])
   let tabbed = one('single', 'Tabbed')
   const tid = prop(tabbed).id
   const tf = prop(tabbed).floors[0].id

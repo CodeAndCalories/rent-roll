@@ -38,9 +38,10 @@
 //     removePropertyBill / setBillLoan, and patchProperty refuses any write
 //     that would give a building a second loan bill. Only the terms are
 //     stored; nothing derived from them is ever written.
-//   * setFloorUnitCount adds and removes main units at the right-hand end
-//     of a floor as drawn, and never removes one that holds anything
-//     (isEmptyUnit): the whole write is refused, naming that unit.
+//   * addUnit (the + tab) and setFloorUnitCount (the stepper) add and
+//     remove main units at the right-hand end of a floor as drawn, and the
+//     stepper never removes one that holds anything (isEmptyUnit): the
+//     whole write is refused, naming that unit.
 //
 // Existing stores that already break a rule (older data) are never rejected
 // for unrelated edits: a property patch is refused only if it ADDS a
@@ -749,16 +750,40 @@ export function nextFloorLabel(floors) {
 }
 
 /**
- * Append a unit to a floor. Main units are laid out by count (one -> full,
- * two -> left + right), so an arriving second unit moves the first one over.
- * Side units are never touched.
+ * Append a unit at the RIGHT-hand end of a floor as drawn — the + tab, and
+ * what the stepper does one at a time. Nothing to its left moves; the
+ * positions are laid out so the drawing reads them back in that order
+ * (one -> full, two -> left + right, more -> left, full…, right). Side
+ * units are never touched.
  */
 export function addUnitTo(floor) {
-  const units = floor.units ?? []
-  const main = units.filter((u) => u.position !== 'side')
+  const drawn = drawnUnits(floor)
+  return withMains(floor, [...drawn, newUnitFor(floor, drawn.length)])
+}
+
+/** A blank unit for main slot `index` of a floor, named off its label: "2F", "2F 2", … */
+function newUnitFor(floor, index) {
   const label = floor.label || 'Unit'
-  const name = main.length === 0 ? label : `${label} ${main.length + 1}`
-  return relayoutFloor({ ...floor, units: [...units, makeUnit({ name, position: 'full' })] })
+  return makeUnit({ name: index === 0 ? label : `${label} ${index + 1}`, position: 'full' })
+}
+
+/**
+ * The floor with its main units replaced by `mains`, given in drawn order:
+ * positions laid out (layoutInOrder) and put back into the main slots in
+ * that order, extra ones appended; an annex keeps its place. A floor whose
+ * units come out the same is returned as is.
+ */
+function withMains(floor, mains) {
+  const placed = layoutInOrder(mains)
+  let k = 0
+  const units = []
+  for (const u of floor.units ?? []) {
+    if (u.position === 'side') units.push(u)
+    else if (k < placed.length) units.push(placed[k++])
+  }
+  while (k < placed.length) units.push(placed[k++])
+  const same = units.length === (floor.units ?? []).length && units.every((u, i) => u === floor.units[i])
+  return same ? floor : { ...floor, units }
 }
 
 /** Most main units the stepper will put on one floor. */
@@ -805,12 +830,8 @@ export function setFloorUnitCount(state, propertyId, floorId, count) {
 
   let mains
   if (n > drawn.length) {
-    const label = floor.label || 'Unit'
-    const added = []
-    for (let i = drawn.length; i < n; i++) {
-      added.push(makeUnit({ name: i === 0 ? label : `${label} ${i + 1}`, position: 'full' }))
-    }
-    mains = [...drawn, ...added]
+    mains = [...drawn]
+    for (let i = drawn.length; i < n; i++) mains.push(newUnitFor(floor, i))
   } else {
     // from the right: the first unit holding anything is where it stops
     for (let i = drawn.length - 1; i >= n; i--) {
@@ -825,18 +846,9 @@ export function setFloorUnitCount(state, propertyId, floorId, count) {
     mains = drawn.slice(0, n)
   }
 
-  // back into the floor's main slots in drawn order; an annex keeps its place
-  const placed = layoutInOrder(mains)
-  let k = 0
-  const units = []
-  for (const u of floor.units ?? []) {
-    if (u.position === 'side') units.push(u)
-    else if (k < placed.length) units.push(placed[k++])
-  }
-  while (k < placed.length) units.push(placed[k++])
-
+  const next = withMains(floor, mains)
   return patchProperty(state, propertyId, (p) => ({
-    floors: floorsOf(p).map((f) => (f.id === floorId ? { ...f, units } : f)),
+    floors: floorsOf(p).map((f) => (f.id === floorId ? next : f)),
   }))
 }
 
