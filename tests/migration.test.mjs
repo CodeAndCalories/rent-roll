@@ -1,15 +1,20 @@
 // Schema migration check. Run with:  npm test   (node --test "tests/**/*.test.mjs")
 //
-// Loads saved v2 and v4 stores through the real store.load() with a fake
-// localStorage and asserts the migration is purely additive: every rent,
-// bill, note, list item, photo, and box position comes through unchanged,
-// a stored sideOf is kept, a unit with no sideOf gets the default, and a
-// store written before unit widths existed comes back at equal widths.
+// Loads saved v2, v4, and v9 stores through the real store.load() with a
+// fake localStorage and asserts the migration is purely additive: every
+// rent, bill, note, list item, photo, and box position comes through
+// unchanged, a stored sideOf is kept, a unit with no sideOf gets the
+// default, a store written before unit widths existed comes back at equal
+// widths, and v10's optional fields (loan.extraStartDate,
+// scenario.forkBasis) are never filled in where they were absent.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { SCHEMA_VERSION, seedData } from '../src/data/schema.js'
-import { load, save, migrate, STORAGE_KEY } from '../src/data/store.js'
+import { SCHEMA_VERSION, makeState, seedData } from '../src/data/schema.js'
+import { load, save, migrate, serialize, STORAGE_KEY } from '../src/data/store.js'
+import { buildFromTemplate } from '../src/data/templates.js'
+import { addScenario, setBillLoan } from '../src/data/ops.js'
+import { forkScenario } from '../src/data/scenarios.js'
 
 class FakeStorage {
   constructor() {
@@ -159,7 +164,7 @@ test('a saved v2 store loads at the current version with every value intact', ()
   assert.equal(r.source, 'storage')
   assert.equal(r.from, 2)
   assert.equal(r.state.version, SCHEMA_VERSION)
-  assert.equal(SCHEMA_VERSION, 9)
+  assert.equal(SCHEMA_VERSION, 10)
   assert.equal(r.warnings.length, 0)
 
   const p = r.state.properties[0]
@@ -325,4 +330,54 @@ test('the seed is an empty sheet at the current version', () => {
   const s = seedData()
   assert.equal(s.version, SCHEMA_VERSION)
   assert.deepEqual(s.properties, [])
+})
+
+/** A store as the v9 app wrote it: a loan with extra principal, a scenario, neither v10 field. */
+function v9Store() {
+  let state = makeState({ properties: [buildFromTemplate('fourplex', 'Fairview')] })
+  const p = state.properties[0]
+  state = setBillLoan(state, p.id, p.bills[0].id, {
+    originalPrincipal: 300000,
+    annualRatePercent: 6.5,
+    termMonths: 360,
+    firstPaymentDate: '2026-01-01',
+    extraMonthlyPrincipal: 200,
+  })
+  const scenario = forkScenario(state, state.portfolios[0].id, { name: 'Raise' })
+  state = addScenario(state, scenario)
+  const stored = JSON.parse(serialize(state))
+  stored.version = 9
+  // v9 had neither field; make sure the fixture does not either
+  for (const sc of stored.scenarios) delete sc.forkBasis
+  for (const b of stored.properties[0].bills) if (b.loan) delete b.loan.extraStartDate
+  return stored
+}
+
+test('a v9 store loads at v10 with nothing lost and neither optional field invented', () => {
+  const stored = v9Store()
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
+  const r = load()
+  assert.equal(r.from, 9)
+  assert.equal(r.state.version, SCHEMA_VERSION)
+  assert.equal(SCHEMA_VERSION, 10)
+  assert.equal(r.warnings.length, 0)
+  assert.deepEqual(r.state.properties, stored.properties, 'every building byte for byte')
+  assert.deepEqual(r.state.portfolios, stored.portfolios)
+  assert.deepEqual(r.state.scenarios, stored.scenarios, 'every scenario byte for byte')
+  const loan = r.state.properties[0].bills[0].loan
+  assert.equal('extraStartDate' in loan, false, 'the extra keeps going in from the first payment')
+  assert.equal(loan.extraMonthlyPrincipal, 200)
+  assert.equal('forkBasis' in r.state.scenarios[0], false, 'no basis: the marker stays quiet')
+  assert.deepEqual(migrate(r.state).state, r.state, 'idempotent')
+
+  // present values are kept, junk ones normalized to "none"
+  const set = v9Store()
+  set.properties[0].bills[0].loan.extraStartDate = '2026-11-01'
+  set.properties[0].bills[1].loan = { originalPrincipal: 1, extraStartDate: 'soon' }
+  set.scenarios[0].forkBasis = '1a2b3c4d'
+  const again = migrate(set).state
+  assert.equal(again.properties[0].bills[0].loan.extraStartDate, '2026-11-01')
+  assert.equal(again.properties[0].bills[1].loan.extraStartDate, null)
+  assert.equal(again.scenarios[0].forkBasis, '1a2b3c4d')
+  assert.equal(migrate({ ...set, scenarios: [{ ...set.scenarios[0], forkBasis: 42 }] }).state.scenarios[0].forkBasis, null)
 })

@@ -357,7 +357,7 @@ test('a v8 store migrates to v9 with nothing lost, and no bill gains a loan it n
   assert.equal(r.source, 'storage')
   assert.equal(r.from, 8)
   assert.equal(r.state.version, SCHEMA_VERSION)
-  assert.equal(SCHEMA_VERSION, 9)
+  assert.equal(SCHEMA_VERSION, 10)
   assert.equal(r.warnings.length, 0)
 
   // every building, floor, unit, bill, record, and unknown field, byte for byte

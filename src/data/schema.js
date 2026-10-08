@@ -8,9 +8,12 @@
 //
 //   State     { version, updatedAt, portfolios[], properties[], scenarios[] }
 //   Portfolio { id, name, propertyIds[] }   // which buildings it holds
-//   Scenario  { id, portfolioId, name, note, createdAt, properties[] }
+//   Scenario  { id, portfolioId, name, note, createdAt, properties[], forkBasis? }
 //              a whole COPY of one portfolio's buildings from the moment it
 //              was made, with fresh ids — never an overlay, never a pointer
+//              forkBasis: optional — the signature of actual at the fork or
+//              last refresh (scenarios.js forkSignature), for "actual changed
+//              since"; absent or null means unknown
 //   Property  { id, name, address, shape, photo, photoSize, view, floors[], bills[] }
 //     shape: 'gable' | 'flat' | 'mansard' | 'custom'
 //     photo: null or a data-URL string (resized to <= 1200px wide before storing)
@@ -36,7 +39,9 @@
 //   Bill     { id, label, amount, cadence, dueDay, paid, loan? } // cadence: 'monthly'|'yearly'|'once'
 //              loan: optional — absent or null means no loan terms, else a Loan
 //   Loan     { originalPrincipal, annualRatePercent, termMonths,
-//              firstPaymentDate, extraMonthlyPrincipal }
+//              firstPaymentDate, extraMonthlyPrincipal, extraStartDate? }
+//              extraStartDate: optional — the extra goes in with payments due
+//              on or after it; absent or null means from the first payment
 //              firstPaymentDate: 'YYYY-MM-DD' local, or null. Only the terms
 //              are stored; every derived figure (P+I, balance, payoff) is
 //              computed for display in loans.js and never written back. The
@@ -108,7 +113,13 @@
 //     A bill with no `loan` key is exactly what it was — normalizeState never
 //     adds one, so every stored bill keeps its bytes. A stored loan is
 //     normalized in place and its unknown fields kept. No migration step.
-export const SCHEMA_VERSION = 9
+// v10: + loan.extraStartDate and + scenario.forkBasis, both OPTIONAL and
+//     never filled in by normalizeState: a loan without a start date keeps
+//     its extra principal from the first payment (as before), and a scenario
+//     without a basis shows no "actual changed" marker until it is forked or
+//     refreshed. load() adopts bases from the old 'rentroll:fork-basis' cache
+//     into the scenarios they name (store.js). No migration step.
+export const SCHEMA_VERSION = 10
 
 /** The portfolio every pre-v6 store's buildings are gathered into. */
 export const DEFAULT_PORTFOLIO_NAME = 'My properties'
@@ -258,7 +269,7 @@ export function toPercent(value) {
  * terms: nothing derived (payment, balance, payoff) is ever stored here.
  */
 export function makeLoan(fields = {}) {
-  return {
+  const loan = {
     originalPrincipal: 0,
     annualRatePercent: 0,
     termMonths: 0,
@@ -271,6 +282,11 @@ export function makeLoan(fields = {}) {
     firstPaymentDate: isDayKey(fields.firstPaymentDate) ? fields.firstPaymentDate : null,
     extraMonthlyPrincipal: toAmount(fields.extraMonthlyPrincipal),
   }
+  // optional: a loan without the key keeps its extra from the first payment
+  if (Object.prototype.hasOwnProperty.call(fields, 'extraStartDate')) {
+    loan.extraStartDate = isDayKey(fields.extraStartDate) ? fields.extraStartDate : null
+  }
+  return loan
 }
 
 /** A bill's `loan`: normalized terms, or null for none. */
@@ -411,7 +427,7 @@ export function stripForScenario(property) {
 }
 
 export function makeScenario(fields = {}) {
-  return {
+  const scenario = {
     id: newId('scenario'),
     portfolioId: '',
     name: '',
@@ -424,6 +440,11 @@ export function makeScenario(fields = {}) {
     note: fields.note == null ? '' : String(fields.note),
     properties: asArray(fields.properties).map((p) => stripForScenario(makeProperty(p))),
   }
+  // optional: a scenario without a basis is "unknown", never guessed at
+  if (Object.prototype.hasOwnProperty.call(fields, 'forkBasis')) {
+    scenario.forkBasis = typeof fields.forkBasis === 'string' && fields.forkBasis !== '' ? fields.forkBasis : null
+  }
+  return scenario
 }
 
 export function makeState(fields = {}) {
