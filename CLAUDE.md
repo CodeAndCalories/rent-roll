@@ -124,7 +124,16 @@ gaining a loan, loan terms through save/load and export/import), and
 `tests/loans.test.mjs` (300,000 at 6.5% over 360 = 1,896.20 to the cent,
 the 0% edge, extra principal shortening the term, missing terms, the typed
 amount beside P+I, and payments to date across month and year boundaries
-in a Los Angeles child process).
+in a Los Angeles child process), and `tests/sidebyside.test.mjs` (the
+first Side by side open forking "What-if <date>" by itself and later opens
+asking, the actual pane rendering zero inputs / buttons / handles /
+toggles, the delta bar as each side's own totals subtracted, refresh from
+actual keeping id and name while replacing content, the stale marker after
+a real edit and never after a scenario edit or a fact, and a full editing
+session on the scenario side leaving every actual object identical by
+reference). Tests that render components import `tests/support/jsx.mjs`
+first: a module hook that runs `.jsx` through Vite's own
+`transformWithOxc` — nothing installed, nothing written to disk.
 
 ### Portfolios
 
@@ -263,6 +272,29 @@ when it was made.
   report) and never removes one.
 - No "apply scenario to actual". One-way copying is what keeps the rules
   simple.
+- **Side by side** (data): `planSideBySide(state, portfolioId, now)` is
+  `{ action: 'fork', name }` when the portfolio has no scenario, else
+  `{ action: 'pick', newFork: { name, ok, reason }, scenarios }` — the
+  new fork refused with the cap's reason at `SCENARIO_CAP`. `whatIfName`
+  is "What-if Oct 7, 2026" (local date via `dayLabel`), numbered " (2)"…
+  on a clash. `splitDeltas(actual, scenario)` gives the delta bar's
+  `DELTA_ROWS` (collected, bills, net, annualNet) on top of
+  `compareTable`, so each side is its own `computeTotals`.
+- **Refresh from actual**: `ops.refreshScenario(state, id, { at })` re-forks
+  a scenario from its portfolio's buildings as they are now — same id,
+  name, note, portfolio, and place in the list; fresh copies with nothing
+  factual; `createdAt` becomes `at` (it is a snapshot from then). Actual
+  and every other scenario stay the very same objects. Unknown id:
+  `RuleError`. App does a trial save first, as for a fork.
+- **Stale marker**: `forkSignature(properties)` is an 8-hex FNV-1a hash of
+  exactly what a fork copies and a scenario can differ by — names,
+  addresses, roofs, floors, units (position, width, rent, status, splits,
+  side), bills with loan terms — with no ids, no facts (photos, payments,
+  tenants, lease dates, list items, notes), and no bill `paid` box.
+  `isStale(state, scenario, basis)` compares the basis taken at the fork
+  with `actualSignature` now: `true` / `false`, or `null` (unknown, the
+  marker stays quiet) without a basis — scenarios from before this, or
+  imported ones. A scenario's own edits never enter into it.
 
 ### Building bills and loans
 
@@ -374,6 +406,11 @@ shows — never a parallel set. Writes go through `addPropertyBill` /
 ### Storage rules
 
 - localStorage key `rentroll:v1`. `SCHEMA_VERSION` is in `schema.js`.
+- `rentroll:fork-basis` is a **cache beside the data, not part of it**:
+  `{ [scenarioId]: forkSignature }`, written by `saveForkBasis` at a fork
+  or a refresh (pruning ids of scenarios that are gone) and read by
+  `loadForkBases`. `load()` / `save()` never touch it, export and import
+  never carry it, and losing it costs only the stale marker.
 - Every `save()` writes the whole state object stamped with `version` and
   `updatedAt`. It refuses to write a non-state value, and refuses to write
   zero properties while the stored state still holds units unless
@@ -579,8 +616,9 @@ stored amount).
   "Remove building" and the armed chip names its contents through
   `TwoTapChip`'s `detail`; an empty one keeps the quiet `✕ Building`.
 - **Toolbar** (under the header): Payments, Leases, Scenarios, Compare
-  (once a scenario exists), Raise rents, Undo (while a raise is undoable),
-  Print / PDF, Backup. Payments and Leases are hidden in scenario mode.
+  (once a scenario exists), Side by side ("Vs" on a phone), Raise rents,
+  Undo (while a raise is undoable), Print / PDF, Backup. Payments and
+  Leases are hidden in scenario mode.
   Chips are 40px tall for phones.
 - **Building picker** (`BuildingPicker.jsx`, under the toolbar, hidden with
   fewer than two buildings): "All" or one building. Selection is UI state
@@ -656,6 +694,37 @@ stored amount).
   the `compareTable` as a table, Actual first, the row labels pinned
   (`sticky left-0`) so the columns scroll sideways at 380px, each scenario
   cell with its delta under it in amber or alert.
+- **Side by side** (`SplitView.jsx`; `split` state in `App.jsx`, never
+  stored, layered ON scenario mode — `scenarioId` is the scenario on the
+  scenario side, so every write from it is `write` → `ops.applyTo` with
+  the scenario target). The toolbar chip runs `planSideBySide`: no scenario
+  → fork "What-if <date>" and open, with a one-line notice; otherwise the
+  `SideBySidePicker` asks, "+ New fork" first. Closing the scenario in any
+  way closes side by side; Exit goes back to real data.
+  - Layout: two panes from `md` up (desktop, or a phone in landscape);
+    stacked on a phone, actual on top. `SplitBar` (sticky, under the
+    header) holds "Actual: totals only" (collapses the actual drawing),
+    Switch (the picker), and Exit. The portfolio bar, building picker,
+    scenario banner, and title block are hidden while it is on.
+  - **Actual pane** (`ActualPane`): read-only BY CONSTRUCTION — it takes
+    no callbacks and renders `Elevation readOnly names`, so it holds no
+    input, button, handle, or toggle (a read-only `UnitBox` wires no click
+    at all), and its collapse control lives outside it, in the bar. Photo
+    buildings draw as their drawing there (a display copy, never written).
+    It wears the actual colours (`ACTUAL_ACCENT`) inside the violet app.
+  - **Scenario pane**: the full editor — the same `editor` handlers and
+    `structure` as the sheet, every Build tool, no photo controls — under a
+    header with the name (rename in place), "a copy from <date>",
+    "⟳ Refresh from actual" (a `TwoTapChip` whose detail says every edit in
+    it is lost and only its name stays), and the quiet "Actual has changed
+    since this was forked" when `isStale` is true.
+  - Each pane has `PaneTotals` (collected with leased count and if fully
+    leased, expenses, net / mo, net / yr); the scenario's Expenses opens
+    the expenses summary. Both panes share one rent-bar scale.
+  - **Delta bar** (`DeltaBar`, sticky bottom, safe-area padded): scenario
+    minus actual for `DELTA_ROWS`, amber better, alert worse, "actual →
+    scenario" under each from `sm` up. Recomputed every render, so it
+    follows each keystroke.
 - **Payment marker** (`PaymentMark` in `UnitBox.jsx`): a small alert-toned
   tag in the box's control row when the CURRENT local month is explicitly
   unpaid or late — "late", "unpaid", or per half ("A unpaid · B late"). An
@@ -705,7 +774,9 @@ stored amount).
   bill in the portfolio), `MonthView.jsx` (one month of payments across the
   portfolio), `LeaseView.jsx` (every lease end in the portfolio, soonest
   first), `ScenarioBanner.jsx`, `ScenariosSheet.jsx`, `CompareView.jsx`
-  (scenario mode's banner, list, and comparison table).
+  (scenario mode's banner, list, and comparison table), `SplitView.jsx`
+  (side by side: the read-only actual pane, the scenario pane, per-pane
+  totals, the delta bar, its bar, and the scenario picker).
 - Unit edits flow through `updateUnit(unitId, patch)` in `App.jsx`, which
   calls `ops.patchUnit`; `patch` is a partial unit or a function
   `(unit) => partial`. Use the function form for anything that appends to or
