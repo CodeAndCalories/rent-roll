@@ -30,6 +30,7 @@ import {
   renamePortfolio as opsRenamePortfolio,
   scenarioTarget,
   setBillLoan as opsSetBillLoan,
+  setFloorUnitCount as opsSetFloorUnitCount,
   setPayment as opsSetPayment,
   setUnitWidths as opsSetUnitWidths,
   sideAnnexCheck,
@@ -189,6 +190,10 @@ export default function App() {
         write((s) => opsRenameFloor(s, propertyId, floorId, label)),
       setWidths: (propertyId, floorId, weights) =>
         write((s) => opsSetUnitWidths(s, propertyId, floorId, weights)),
+      // the stepper: a whole count in one write; refused (and named) when
+      // it would remove a unit that holds anything
+      setUnitCount: (propertyId, floorId, count) =>
+        write((s) => opsSetFloorUnitCount(s, propertyId, floorId, count)),
       removeUnit: (unitId) =>
         write((s) => {
           const next = opsRemoveUnit(s, unitId) // throws when the unit holds anything

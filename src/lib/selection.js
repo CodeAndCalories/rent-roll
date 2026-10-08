@@ -29,3 +29,17 @@ export function displayedProperties(properties, selection) {
   if (selection === ALL) return list
   return list.filter((p) => p.id === selection)
 }
+
+/**
+ * Which building is in Build mode (Elevation's state, never stored): the
+ * one asked for while it is on the sheet; when the sheet shows a single
+ * OTHER building instead — the picker switched — that one, so Build stays
+ * on across a switch. Off when nothing was asked for, or when several
+ * buildings are drawn and the asked-for one is not among them.
+ */
+export function buildTarget(buildId, displayed) {
+  if (buildId == null) return null
+  const list = Array.isArray(displayed) ? displayed : []
+  if (list.some((p) => p.id === buildId)) return buildId
+  return list.length === 1 ? list[0].id : null
+}

@@ -2,7 +2,7 @@ import { Fragment, useRef, useState } from 'react'
 import UnitBox from './UnitBox.jsx'
 import PhotoBuilding, { PHOTO_MIN_W } from './PhotoBuilding.jsx'
 import { Chip, InlineLabel, TwoTapChip, cx } from './controls.jsx'
-import { countUnits, describeContents } from '../data/ops.js'
+import { MAX_FLOOR_UNITS, countUnits, describeContents } from '../data/ops.js'
 import { formatDollars } from '../data/schema.js'
 import { propertyBillsMonthly } from '../data/totals.js'
 import { drawnUnits, equalizePair, growOf, isMainUnit, resizePair } from '../lib/widths.js'
@@ -505,7 +505,7 @@ function Roof({ shape, width }) {
  * Sits under the grade line at the same width as the figure. Holds the
  * building's Bills, the roof cycle, drawing/photo toggle, photo
  * upload/remove, and the Build toggle that puts the handles on the drawing
- * above it.
+ * above it — and, while Build is on, a unit-count stepper per floor.
  */
 export function BuildingCaption({
   property,
@@ -518,6 +518,7 @@ export function BuildingCaption({
   onSetPhoto,
   onNotice,
   onOpenBills,
+  onSetUnitCount,
 }) {
   const [busy, setBusy] = useState(false)
   const photo = hasPhoto(property)
@@ -645,11 +646,106 @@ export function BuildingCaption({
           ))}
       </div>
 
+      {!photoView && build && property.floors.length > 0 && onSetUnitCount && (
+        <div className="mt-2 border-t border-dashed border-line/30 pt-1.5">
+          <div className="text-[9px] tracking-[0.2em] text-line/50 uppercase">Units per floor</div>
+          {property.floors.map((f) => (
+            <UnitCountRow key={f.id} floor={f} onSet={(n) => onSetUnitCount(property.id, f.id, n)} />
+          ))}
+        </div>
+      )}
+
       {!photoView && build && (
         <p className="mt-1.5 text-[9px] leading-relaxed tracking-[0.12em] text-line/50 uppercase">
-          Tap a label to rename · ✕ removes an empty unit or floor
+          Tap a label to rename · ✕ removes an empty unit or floor · units come and go on the right, never one
+          holding anything
         </p>
       )}
     </div>
+  )
+}
+
+/**
+ * One floor's unit count: − and + step it, or type a number and press
+ * Enter (or tap away) to set it in one go. Units are added and removed at
+ * the right of the floor; ops.setFloorUnitCount refuses to remove one that
+ * holds anything, and App shows why. The side annex is not counted.
+ */
+function UnitCountRow({ floor, onSet }) {
+  const count = drawnUnits(floor).length
+  const name = floor.label || 'this floor'
+  return (
+    <div className="mt-1 flex items-center gap-1.5">
+      <span className="min-w-0 flex-1 truncate text-[9px] tracking-[0.2em] text-line/70 uppercase">
+        {floor.label || 'Floor'}
+      </span>
+      <Chip
+        onClick={() => onSet(count - 1)}
+        disabled={count === 0}
+        aria-label={`One unit fewer on ${name}`}
+        title="Remove the rightmost unit (only if it is empty)"
+        className="min-w-11 justify-center text-sm sm:min-w-9"
+      >
+        −
+      </Chip>
+      <CountInput value={count} max={MAX_FLOOR_UNITS} onCommit={onSet} ariaLabel={`Units on ${name}`} />
+      <Chip
+        onClick={() => onSet(count + 1)}
+        disabled={count >= MAX_FLOOR_UNITS}
+        aria-label={`One more unit on ${name}`}
+        title="Add a unit on the right"
+        className="min-w-11 justify-center text-sm sm:min-w-9"
+      >
+        +
+      </Chip>
+    </div>
+  )
+}
+
+/**
+ * A whole number typed in place. The draft lives only while the field has
+ * focus; Enter or blur commits it, Escape drops it. If the write is
+ * refused, the field simply shows the stored count again.
+ */
+function CountInput({ value, max, onCommit, ariaLabel }) {
+  const [draft, setDraft] = useState(null) // null = not editing
+  const cancelled = useRef(false)
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      autoComplete="off"
+      enterKeyHint="done"
+      aria-label={ariaLabel}
+      title={`0 to ${max}`}
+      value={draft ?? String(value)}
+      onFocus={(e) => {
+        cancelled.current = false
+        setDraft(String(value))
+        e.currentTarget.select()
+      }}
+      onChange={(e) => setDraft(e.target.value.replace(/[^\d]/g, ''))}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          e.currentTarget.blur() // the blur commits
+        } else if (e.key === 'Escape') {
+          e.preventDefault()
+          cancelled.current = true
+          e.currentTarget.blur()
+        }
+      }}
+      onBlur={() => {
+        const n = parseInt(draft ?? '', 10)
+        setDraft(null)
+        if (cancelled.current) {
+          cancelled.current = false
+          return
+        }
+        // passed through as typed: out of range is refused in ops.js, with the reason
+        if (Number.isInteger(n) && n !== value) onCommit(n)
+      }}
+      className="h-11 w-11 shrink-0 border border-line/40 bg-transparent text-center text-base text-ink tabular-nums outline-none focus:border-amber sm:h-9 sm:w-9 sm:text-[11px]"
+    />
   )
 }

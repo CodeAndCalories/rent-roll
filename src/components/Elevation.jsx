@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import Building, { BuildingCaption, figureWidthFor } from './Building.jsx'
 import { Chip } from './controls.jsx'
+import { buildTarget } from '../lib/selection.js'
 
 // All components at module scope (see UnitBox.jsx for why).
 
@@ -29,7 +30,9 @@ export function sheetContentWidth(properties, { readOnly = false } = {}) {
  * With no properties at all the sheet shows the first-run empty state.
  *
  * One building at a time can be in Build mode (the handles drawn on the
- * figure). Which one is UI state and is never stored.
+ * figure). Which one is UI state and is never stored. Build follows the
+ * sheet: when the picker swaps the one building on screen for another,
+ * the new one is in Build mode too (buildTarget).
  */
 export default function Elevation({
   properties,
@@ -48,6 +51,7 @@ export default function Elevation({
 }) {
   const [buildId, setBuildId] = useState(null)
   const list = Array.isArray(properties) ? properties : []
+  const activeBuild = buildTarget(buildId, list)
 
   if (list.length === 0 && !readOnly) {
     return <EmptyState onAddProperty={onAddProperty} />
@@ -65,7 +69,7 @@ export default function Elevation({
               property={p}
               onUnitChange={onUnitChange}
               onOpenUnit={onOpenUnit}
-              build={buildId === p.id}
+              build={activeBuild === p.id}
               structure={structure}
               rentScale={rentScale}
               readOnly={readOnly}
@@ -86,13 +90,14 @@ export default function Elevation({
                 key={p.id}
                 property={p}
                 width={figureWidthFor(p)}
-                build={buildId === p.id}
-                onToggleBuild={() => setBuildId((cur) => (cur === p.id ? null : p.id))}
+                build={activeBuild === p.id}
+                onToggleBuild={() => setBuildId(activeBuild === p.id ? null : p.id)}
                 onPropertyChange={onPropertyChange}
                 onRemoveProperty={onRemoveProperty}
                 onSetPhoto={onSetPhoto}
                 onNotice={onNotice}
                 onOpenBills={onOpenBills}
+                onSetUnitCount={structure.setUnitCount}
                 photos={photos}
               />
             ))}

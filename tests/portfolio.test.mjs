@@ -1,6 +1,6 @@
 // Portfolio behaviour: empty first run, templates, the side-annex and
-// splittable rules in the data layer, building selection, and totals that
-// stay portfolio-wide. Run with:  npm test
+// splittable rules in the data layer, building selection (and Build mode
+// following it), and totals that stay portfolio-wide. Run with:  npm test
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -21,6 +21,7 @@ import { computeTotals } from '../src/data/totals.js'
 import {
   ALL,
   SIDE_BY_SIDE_MAX,
+  buildTarget,
   defaultSelection,
   displayedProperties,
   resolveSelection,
@@ -268,4 +269,21 @@ test('removing buildings: refused with units, allowed when empty, the last one c
   assert.equal(save(emptied).ok, true)
   assert.equal(save(gone).ok, true)
   assert.equal(load().state.properties.length, 0)
+})
+
+test('Build mode stays on when the picker switches to another building', () => {
+  const props = ['A', 'B', 'C', 'D'].map((n) => buildFromTemplate('single', n))
+  const [a, b, c] = props
+  const shown = (id) => displayedProperties(props, resolveSelection(props, id))
+
+  assert.equal(buildTarget(null, shown(a.id)), null, 'off until asked for')
+  assert.equal(buildTarget(a.id, shown(a.id)), a.id)
+  // one at a time: switching to B carries Build over, and on to C
+  assert.equal(buildTarget(a.id, shown(b.id)), b.id)
+  assert.equal(buildTarget(a.id, shown(c.id)), c.id)
+  // All: the asked-for building keeps it while it is drawn
+  assert.equal(buildTarget(a.id, shown(ALL)), a.id)
+  // several drawn and the asked-for one gone: off, never a guess
+  assert.equal(buildTarget('gone', [b, c]), null)
+  assert.equal(buildTarget(a.id, []), null)
 })
