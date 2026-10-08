@@ -33,6 +33,11 @@
 //     other write — a rent change, a rename, a split or unsplit, a raise, a
 //     move between portfolios — can create, change, or drop a record. A
 //     month with no record is untracked, which is not unpaid.
+//   * At most one bill per building carries loan terms. Building bills are
+//     written through addPropertyBill / patchPropertyBill /
+//     removePropertyBill / setBillLoan, and patchProperty refuses any write
+//     that would give a building a second loan bill. Only the terms are
+//     stored; nothing derived from them is ever written.
 //
 // Existing stores that already break a rule (older data) are never rejected
 // for unrelated edits: a property patch is refused only if it ADDS a
@@ -41,8 +46,11 @@
 import {
   HALVES,
   PAYMENT_STATUSES,
+  asLoan,
   isMonthKey,
+  makeBill,
   makeFloor,
+  makeLoan,
   makePayment,
   makeUnit,
   paymentKey,
@@ -53,6 +61,7 @@ import {
 } from './schema.js'
 import { countPayments, defaultAmountFor, nextPaymentStatus } from './payments.js'
 import { SCENARIO_CAP, SCENARIO_CAP_REASON, countScenario, scenarioView } from './scenarios.js'
+import { loanBillCount, loanBillOf } from './loans.js'
 
 export class RuleError extends Error {
   constructor(message, code) {
@@ -284,7 +293,8 @@ function sameRecord(a, b) {
 /**
  * Patch one property. `patch` is a partial property or (property) => partial.
  * Rejected with RuleError if the result has MORE side-annex violations than
- * before (so older data that already breaks the rule can still be edited).
+ * before, or more loan bills beyond the one allowed (so older data that
+ * already breaks a rule can still be edited).
  */
 export function patchProperty(state, propertyId, patch) {
   const current = state.properties.find((p) => p.id === propertyId)
@@ -298,7 +308,73 @@ export function patchProperty(state, propertyId, patch) {
       'annex-rule',
     )
   }
+  if (loanViolations(next) > loanViolations(current)) {
+    const holder = loanBillOf(current)
+    throw new RuleError(
+      holder
+        ? `${current.name || 'This building'} already has loan terms on "${holder.label || 'a bill'}". One loan per building.`
+        : 'A building can carry loan terms on one bill only.',
+      'one-loan',
+    )
+  }
   return { ...state, properties: state.properties.map((p) => (p.id === propertyId ? next : p)) }
+}
+
+/** Loan bills beyond the one a building may have (0 when it is clean). */
+function loanViolations(property) {
+  return Math.max(0, loanBillCount(property) - 1)
+}
+
+// ---------------------------------------------------------------------------
+// building bills — taxes, insurance, water, the mortgage
+//
+// These edit property.bills in place: the four every template seeds are the
+// very bills the editor shows, never a parallel set. All of them go through
+// patchProperty, so the one-loan rule holds whatever the caller does.
+// ---------------------------------------------------------------------------
+
+/** Append a building bill (made with makeBill by the caller, or a blank one). */
+export function addPropertyBill(state, propertyId, bill = makeBill()) {
+  return patchProperty(state, propertyId, (p) => ({ bills: [...(p.bills ?? []), makeBill(bill)] }))
+}
+
+/**
+ * Patch one building bill. `patch` is a partial bill or (bill) => partial.
+ * An amount is coerced with toAmount (never NaN); a `loan` field is
+ * normalized (null takes the terms off). An unknown bill or building leaves
+ * the state unchanged. A second loan bill is refused with RuleError.
+ */
+export function patchPropertyBill(state, propertyId, billId, patch) {
+  return patchProperty(state, propertyId, (p) => {
+    const bills = p.bills ?? []
+    const current = bills.find((b) => b.id === billId)
+    if (!current) return null
+    const partial = typeof patch === 'function' ? patch(current) : patch
+    if (!partial || typeof partial !== 'object') return null
+    const next = { ...current, ...partial }
+    if ('amount' in partial) next.amount = toAmount(partial.amount)
+    if ('loan' in partial) next.loan = asLoan(partial.loan)
+    return { bills: bills.map((b) => (b.id === billId ? next : b)) }
+  })
+}
+
+/** Remove one building bill. The two-tap confirm is the UI's; an unknown id is a no-op. */
+export function removePropertyBill(state, propertyId, billId) {
+  const property = state.properties.find((p) => p.id === propertyId)
+  if (!(property?.bills ?? []).some((b) => b.id === billId)) return state
+  return patchProperty(state, propertyId, (p) => ({ bills: (p.bills ?? []).filter((b) => b.id !== billId) }))
+}
+
+/**
+ * Put loan terms on a building bill, change some of them, or take them off.
+ * `terms` is a partial Loan merged over what the bill has, or null to remove
+ * the terms. Only the terms are stored. Refused with RuleError when another
+ * bill of the building already carries a loan.
+ */
+export function setBillLoan(state, propertyId, billId, terms) {
+  return patchPropertyBill(state, propertyId, billId, (b) => ({
+    loan: terms === null ? null : makeLoan({ ...(b.loan ?? {}), ...(terms ?? {}) }),
+  }))
 }
 
 /** Add a building, into `portfolioId` or else the first portfolio. */

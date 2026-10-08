@@ -24,6 +24,19 @@ export function billMonthly(bill) {
 }
 
 /**
+ * Monthly cost of a building's own bills. The building bills panel shows
+ * this and computeTotals adds it up, so the two can never disagree.
+ */
+export function propertyBillsMonthly(property) {
+  return (property?.bills ?? []).reduce((sum, b) => sum + billMonthly(b), 0)
+}
+
+/** Monthly cost of one unit's own bills (the unit panel's figure). */
+export function unitBillsMonthly(unit) {
+  return (unit?.bills ?? []).reduce((sum, b) => sum + billMonthly(b), 0)
+}
+
+/**
  * Totals for the title block and the print view. Every number is finite.
  * Always call this with the WHOLE portfolio; the title block shows
  * portfolio totals regardless of which buildings are drawn.
@@ -48,10 +61,8 @@ export function computeTotals(properties) {
 
   const list = Array.isArray(properties) ? properties : []
   for (const p of list) {
-    for (const b of p.bills ?? []) {
-      propertyBills += billMonthly(b)
-      billCount += 1
-    }
+    propertyBills += propertyBillsMonthly(p)
+    billCount += (p.bills ?? []).length
     for (const f of p.floors ?? []) {
       for (const u of f.units ?? []) {
         const m = unitMonthly(u)
@@ -62,10 +73,8 @@ export function computeTotals(properties) {
           collected += m
           leased += 1
         }
-        for (const b of u.bills ?? []) {
-          unitBills += billMonthly(b)
-          billCount += 1
-        }
+        unitBills += unitBillsMonthly(u)
+        billCount += (u.bills ?? []).length
       }
     }
   }
@@ -88,4 +97,48 @@ export function computeTotals(properties) {
     maxRent,
     properties: list.length,
   }
+}
+
+/**
+ * Every bill in some buildings (the active portfolio's), grouped for the
+ * expenses summary: per building, its own bills, then each unit that has
+ * bills. The sums are made with the same helpers in the same order as
+ * computeTotals, so `propertyBills`, `unitBills`, and `total` are the very
+ * numbers the title block shows — not merely close to them.
+ */
+export function expenseSummary(properties) {
+  const buildings = []
+  let propertyBills = 0
+  let unitBills = 0
+
+  for (const p of Array.isArray(properties) ? properties : []) {
+    const own = propertyBillsMonthly(p)
+    propertyBills += own
+    const units = []
+    let unitsMonthly = 0
+    for (const f of p.floors ?? []) {
+      for (const u of f.units ?? []) {
+        const monthly = unitBillsMonthly(u)
+        unitBills += monthly
+        if ((u.bills ?? []).length === 0) continue
+        unitsMonthly += monthly
+        units.push({
+          unit: u,
+          floor: f.label || '',
+          monthly,
+          bills: u.bills.map((b) => ({ bill: b, monthly: billMonthly(b) })),
+        })
+      }
+    }
+    buildings.push({
+      property: p,
+      monthly: own,
+      bills: (p.bills ?? []).map((b) => ({ bill: b, monthly: billMonthly(b) })),
+      units,
+      unitsMonthly,
+      total: own + unitsMonthly,
+    })
+  }
+
+  return { buildings, propertyBills, unitBills, total: propertyBills + unitBills }
 }
